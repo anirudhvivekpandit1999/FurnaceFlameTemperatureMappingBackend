@@ -1,9 +1,12 @@
-
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
 import pandas as pd
+import json
+import uuid
+from datetime import datetime
+import math
 
 app = FastAPI()
 
@@ -21,19 +24,43 @@ app.add_middleware(
 )
 
 UPLOAD_DIR = "uploads"
+DATA_DIR = "saved_data"
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def clean_list(lst):
+    cleaned = []
+    for x in lst:
+        if isinstance(x, float) and (math.isnan(x) or math.isinf(x)):
+            cleaned.append(None)
+        else:
+            cleaned.append(x)
+    return cleaned
+
+
+def get_col(df, col_name):
+    if col_name not in df.columns:
+        return []
+    col = df[col_name]
+    if isinstance(col, pd.DataFrame):
+        col = col.iloc[:, 0]
+    return col.tolist()
+
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        file_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow().isoformat()
+
+        file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         df = pd.read_excel(file_path, header=None)
-
-        print(df.head(20))
 
         start_row = None
         for i, row in df.iterrows():
@@ -48,36 +75,17 @@ async def upload_file(file: UploadFile = File(...)):
         data = df.iloc[start_row+1:start_row+15]
 
         data.columns = [str(col).strip().upper() for col in headers]
-
         data = data.loc[:, ~data.columns.duplicated()]
-
-        print("COLUMNS:", data.columns.tolist())
 
         if "ELEVATION" not in data.columns:
             return {"error": f"ELEVATION column missing. Found: {data.columns.tolist()}"}
 
         data = data.dropna(subset=["ELEVATION"])
 
-        def get_col(df, col_name):
-            if col_name not in df.columns:
-                return []
-            col = df[col_name]
-            if isinstance(col, pd.DataFrame):
-                col = col.iloc[:, 0]
-            return col.tolist()
-
-        import math
-
-        def clean_list(lst):
-            cleaned = []
-            for x in lst:
-                if isinstance(x, float) and (math.isnan(x) or math.isinf(x)):
-                    cleaned.append(None)
-                else:
-                    cleaned.append(x)
-            return cleaned
-
         result = {
+            "id": file_id,
+            "filename": file.filename,
+            "timestamp": timestamp,
             "elevation": clean_list(get_col(data, "ELEVATION")),
             "corner1": clean_list(get_col(data, "CORNER 1")),
             "corner2": clean_list(get_col(data, "CORNER 2")),
@@ -86,13 +94,45 @@ async def upload_file(file: UploadFile = File(...)):
             "average": clean_list(get_col(data, "AVERAGE"))
         }
 
-        print("RESULT:", result)
+        save_path = os.path.join(DATA_DIR, f"{file_id}.json")
+        with open(save_path, "w") as f:
+            json.dump(result, f)
 
         return result
 
     except Exception as e:
-        print("ERROR:", str(e))
         return {"error": str(e)}
 
 
+@app.get("/history")
+def get_history():
+    files = os.listdir(DATA_DIR)
 
+    history = []
+    for file in files:
+        path = os.path.join(DATA_DIR, file)
+        with open(path, "r") as f:
+            data = json.load(f)
+
+            history.append({
+                "id": data["id"],
+                "filename": data["filename"],
+                "timestamp": data["timestamp"]
+            })
+
+    history.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    return history
+
+
+@app.get("/history/{file_id}")
+def get_single(file_id: str):
+    path = os.path.join(DATA_DIR, f"{file_id}.json")
+
+    if not os.path.exists(path):
+        return {"error": "File not found"}
+
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    return data
