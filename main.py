@@ -72,7 +72,7 @@ async def upload_file(file: UploadFile = File(...)):
             return {"error": "ELEVATION table not found"}
 
         headers = df.iloc[start_row]
-        data = df.iloc[start_row+1:start_row+15]
+        data = df.iloc[start_row+1:start_row+10]
 
         data.columns = [str(col).strip().upper() for col in headers]
         data = data.loc[:, ~data.columns.duplicated()]
