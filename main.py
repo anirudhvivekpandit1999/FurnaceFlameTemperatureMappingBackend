@@ -60,7 +60,11 @@ async def upload_file(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        df = pd.read_excel(file_path, header=None)
+        excel_file = pd.ExcelFile(file_path)
+        sheet_names = excel_file.sheet_names
+        latest_sheet = sheet_names[-1] 
+
+        df = pd.read_excel(file_path, sheet_name=latest_sheet, header=None)
 
         start_row = None
         for i, row in df.iterrows():
