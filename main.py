@@ -30,7 +30,7 @@ def get_db():
     return pymysql.connect(
         host="localhost",
         user="root",
-        password="",  # 👈 no password
+        password="password",  # 👈 no password
         database="furnace_db",
         cursorclass=pymysql.cursors.DictCursor
     )
