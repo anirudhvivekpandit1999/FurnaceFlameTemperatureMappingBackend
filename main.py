@@ -13,7 +13,8 @@ app = FastAPI()
 # ─── CORS ─────────────────────────────────────────────────────
 origins = [
     "http://localhost:5173",
-    "https://furnaceflametemperaturemapping.vercel.app"
+    "https://furnaceflametemperaturemapping.vercel.app",
+    "http://101.53.132.91:5173"
 ]
 
 app.add_middleware(
@@ -47,8 +48,8 @@ def clean(val):
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    station_id: int = Form(...),
-    unit_id: int = Form(...),
+    station_id: int =  1,
+    unit_id: int =  1,
     uploaded_by: str = Form("system"),
     notes: str = Form("")
 ):
