@@ -61,21 +61,20 @@ def clean(val):
 # Helper: Extract date (ddmmyyyy)
 # ─────────────────────────────────────────────
 def extract_date_from_sheet(df):
-    pattern = r'\b(\d{2})(\d{2})(\d{4})\b'
-
-    for i in range(min(20, len(df))):  # scan top 20 rows
-        for val in df.iloc[i]:
-            if isinstance(val, str):
-                match = re.search(pattern, val)
-                if match:
-                    d, m, y = match.groups()
-                    try:
-                        return datetime(int(y), int(m), int(d)).date()
-                    except:
-                        continue
+    """
+    Extracts the date from cell D2 (index: row=1, col=3 in 0-based).
+    Expected format: 'Date :- DD/MM/YYYY'
+    """
+    try:
+        # D2 = row index 1, column index 3 (0-based)
+        cell_value = str(df.iloc[1, 3])
+        match = re.search(r'(\d{2})/(\d{2})/(\d{4})', cell_value)
+        if match:
+            d, m, y = match.groups()
+            return datetime(int(y), int(m), int(d)).date()
+    except (IndexError, ValueError):
+        pass
     return None
-
-
 # ─────────────────────────────────────────────
 # MAIN API
 # ─────────────────────────────────────────────
