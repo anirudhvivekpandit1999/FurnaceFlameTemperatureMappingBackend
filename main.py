@@ -8,6 +8,7 @@ import shutil
 import os
 from datetime import datetime
 import re
+from fastapi import Query
 
 app = FastAPI()
 
@@ -261,3 +262,17 @@ def get_units(station_id: int):
     data = cur.fetchall()
     conn.close()
     return data
+
+@app.get("/mapping-dates")
+def get_mapping_dates(
+    station_id: int = Query(...),
+    unit_id:    int = Query(...)
+):
+    conn = get_db()
+    cur  = conn.cursor()
+
+    cur.callproc("sp_get_mapping_dates", (station_id, unit_id))
+    rows = cur.fetchall()
+    conn.close()
+
+    return rows
