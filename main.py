@@ -143,7 +143,7 @@ async def upload_file(
                 continue
 
             # 5. UPSERT RUN (IMPORTANT)
-            cur.callproc("sp_upsert_run", (
+            cur.callproc("sp_create_run", (
                 station_id,
                 unit_id,
                 file.filename,
@@ -168,7 +168,7 @@ async def upload_file(
                 })
 
             # 7. Replace points (delete + insert)
-            cur.callproc("sp_replace_run_points_bulk", (
+            cur.callproc("sp_add_run_points_bulk", (
                 run_id,
                 json.dumps(points)
             ))
