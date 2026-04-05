@@ -290,11 +290,19 @@ async def upload_file(
                 print(f"Skipping sheet {sheet_name} (no elevation table)")
                 continue
 
-            for i in range(start, len(df)):
+            # Find the row index where the boiler section starts so we
+            # know exactly where the elevation table ends.
+            boiler_start = find_row(df, "BOILER & MILL PARAMETERS")
+            elev_end = boiler_start if boiler_start is not None else len(df)
+
+            for i in range(start, elev_end):
                 row = df.iloc[i]
-                if pd.isna(row[0]):
-                    break
-                elevation.append(clean(row[0]))
+                elev_val = clean(row[0])
+                # Skip rows with no elevation value (merged/blank cells,
+                # note rows, etc.)
+                if elev_val is None:
+                    continue
+                elevation.append(elev_val)
                 c1.append(clean(row[1]))
                 c2.append(clean(row[2]))
                 c3.append(clean(row[3]))
