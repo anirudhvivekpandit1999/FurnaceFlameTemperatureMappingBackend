@@ -53,21 +53,7 @@ def clean(val):
 
 
 # ─────────────────────────────────────────────────────────────
-# Helper: Clean string value
-# ─────────────────────────────────────────────────────────────
-def clean_str(val):
-    try:
-        if pd.isna(val):
-            return None
-        s = str(val).strip()
-        return s if s else None
-    except:
-        return None
-
-
-# ─────────────────────────────────────────────────────────────
-# Helper: Extract date from cell D2 (row index 1, col index 3)
-# Expected format: 'Date :- DD/MM/YYYY'
+# Helper: Extract date from D2 → 'Date :- DD/MM/YYYY'
 # ─────────────────────────────────────────────────────────────
 def extract_date_from_sheet(df):
     try:
@@ -82,11 +68,11 @@ def extract_date_from_sheet(df):
 
 
 # ─────────────────────────────────────────────────────────────
-# Helper: Find a row index that contains a keyword in col 0
+# Helper: Find row index where col[search_col] contains keyword
 # ─────────────────────────────────────────────────────────────
-def find_row(df, keyword, col=0):
+def find_row(df, keyword, search_col=0):
     for i, row in df.iterrows():
-        if keyword.upper() in str(row[col]).upper():
+        if keyword.upper() in str(row[search_col]).upper():
             return i
     return None
 
@@ -94,22 +80,16 @@ def find_row(df, keyword, col=0):
 # ─────────────────────────────────────────────────────────────
 # Helper: Extract Boiler & Mill Parameters
 #
-# Layout (0-based col indices):
-#   Col A (0): label
-#   Col B (1): L value
-#   Col C (2): R value  (some rows)
-#   Col E (4): label (right-side params)
-#   Col F (5): value
+# EXACT LAYOUT (verified from screenshot, 0-based col indices):
 #
-# Rows (relative to "Boiler & Mill Parameters" header row):
-#   +1: Main Steam Pressure  (col B=L, col C=R)  | FG Temp after DPSH (col F)
-#   +2: Main Steam Flow      (col B=L, col C=R)  | FG Temp after PSH  (col F)
-#   +3: Superheat Spray      (col B=L, col C=R)  | FG Temp after RH   (col F)
-#   +4: Re-heat Spray        (col B=L, col C=R)  | FG Temp after HSH  (col F)
-#   +5: O2 at APH inlet PCR  (col B=L, col C=R)  | FG Temp after Eco  (col F)
-#   +6: Wind Box DP          (col B=L, col C=R)  | FG Temp after APH  (col F)
-#   +7: Total PA flow        (col B=single)
-#   ...then merged single-value rows for FG Temp at inlet (col B or F, verify)
+#  Row+0  │ "Boiler & Mill Parameters"  header
+#  Row+1  │ A=label   C(2)=L   D(3)=R  │ E=label  G(6)=L   H(7)=R   ← Main Steam Pressure / FG DPSH
+#  Row+2  │ A=label   C(2)=single val  │ E=label  G(6)=L   H(7)=R   ← Main Steam Flow     / FG PSH
+#  Row+3  │ A=label   C(2)=L   D(3)=R  │ E=label  G(6)=L   H(7)=R   ← Superheat Spray     / FG RH
+#  Row+4  │ A=label   C(2)=L   D(3)=R  │ E=label  G(6)=L   H(7)=R   ← Re-heat Spray       / FG HSH
+#  Row+5  │ A=label   C(2)=L   D(3)=R  │ E=label  G(6)=L   H(7)=R   ← O2 at APH PCR       / FG Eco
+#  Row+6  │ A=label   C(2)=L   D(3)=R  │ (no right-side label)       ← Wind Box DP
+#  Row+7  │ A=label   C(2)=single val  │ E=label  G(6)=L   H(7)=R   ← Total PA Flow        / FG APH
 # ─────────────────────────────────────────────────────────────
 def extract_boiler_mill_params(df):
     header_row = find_row(df, "BOILER & MILL PARAMETERS")
@@ -122,70 +102,60 @@ def extract_boiler_mill_params(df):
         except:
             return None
 
-    params = {
-        # Left column params (L / R split)
-        "main_steam_pressure_l":   get(1, 1),
-        "main_steam_pressure_r":   get(1, 2),
-        "main_steam_flow_l":       get(2, 1),
-        "main_steam_flow_r":       get(2, 2),
-        "superheat_spray_l":       get(3, 1),
-        "superheat_spray_r":       get(3, 2),
-        "reheat_spray_l":          get(4, 1),
-        "reheat_spray_r":          get(4, 2),
-        "o2_aph_inlet_pcr_l":      get(5, 1),
-        "o2_aph_inlet_pcr_r":      get(5, 2),
-        "wind_box_dp_l":           get(6, 1),
-        "wind_box_dp_r":           get(6, 2),
-        "total_pa_flow":           get(7, 1),
+    return {
+        # ── Left side: L col=2, R col=3 ───────────────────────────────────
+        "main_steam_pressure_l": get(1, 2),   # single val, no R
+        "main_steam_pressure_r": None,
+        "main_steam_flow_l":     get(2, 2),   # single merged value
+        "main_steam_flow_r":     None,
+        "superheat_spray_l":     get(3, 2),
+        "superheat_spray_r":     get(3, 3),
+        "reheat_spray_l":        get(4, 2),
+        "reheat_spray_r":        get(4, 3),
+        "o2_aph_inlet_pcr_l":    get(5, 2),
+        "o2_aph_inlet_pcr_r":    get(5, 3),
+        "wind_box_dp_l":         get(6, 2),
+        "wind_box_dp_r":         get(6, 3),
+        "total_pa_flow":         get(7, 2),
 
-        # Right column: FG Temps (col F = index 5)
-        "fg_temp_after_dpsh_l":    get(1, 5),
-        "fg_temp_after_dpsh_r":    get(1, 6),
-        "fg_temp_after_psh_l":     get(2, 5),
-        "fg_temp_after_psh_r":     get(2, 6),
-        "fg_temp_after_rh_l":      get(3, 5),
-        "fg_temp_after_rh_r":      get(3, 6),
-        "fg_temp_after_hsh_l":     get(4, 5),
-        "fg_temp_after_hsh_r":     get(4, 6),
-        "fg_temp_after_eco_l":     get(5, 5),
-        "fg_temp_after_eco_r":     get(5, 6),
-        "fg_temp_after_aph_l":     get(6, 5),
-        "fg_temp_after_aph_r":     get(6, 6),
+        # ── Right side: FG Temps  L col=6, R col=7 ────────────────────────
+        "fg_temp_after_dpsh_l":  get(1, 6),
+        "fg_temp_after_dpsh_r":  get(1, 7),
+        "fg_temp_after_psh_l":   get(2, 6),
+        "fg_temp_after_psh_r":   get(2, 7),
+        "fg_temp_after_rh_l":    get(3, 6),
+        "fg_temp_after_rh_r":    get(3, 7),
+        "fg_temp_after_hsh_l":   get(4, 6),
+        "fg_temp_after_hsh_r":   get(4, 7),
+        "fg_temp_after_eco_l":   get(5, 6),
+        "fg_temp_after_eco_r":   get(5, 7),
+        "fg_temp_after_aph_l":   get(7, 6),   # row+7 same as Total PA flow row
+        "fg_temp_after_aph_r":   get(7, 7),
     }
-
-    # FG Temp at APH inlet — single merged cell, try col 5 at row +0 of the
-    # blank separator or a dedicated row; adjust offset if layout differs
-    # (row header_row+8 in your screenshot shows "Total PA flow (TPH)")
-    # We'll also try reading the single-value FG temp rows that appear
-    # below the L/R section in col F
-    try:
-        params["fg_temp_dpsh_inlet"] = clean(df.iloc[header_row + 1, 5]) \
-            if params["fg_temp_after_dpsh_l"] is None else params["fg_temp_after_dpsh_l"]
-    except:
-        pass
-
-    return params
 
 
 # ─────────────────────────────────────────────────────────────
 # Helper: Extract Coal Mill Parameters
 #
-# Layout:
-#   Row "COAL MILLS": labels row → Mills A B C D E F in cols B-G (1-6)
-#   +1: Coal Flow (TPH)
-#   +2: PA Flow (TPH)
-#   +3: Mill DP (mmwc)
-#   +4: O2 at APH (%) — actually "O₂ at APH inlet (PCR) %"
-#   +5: Mill Outlet Temp (°C)
-#   +6: Mill Current (Amp)
+# EXACT LAYOUT (verified from screenshot, 0-based col indices):
+#
+#  Row+0  │ "Coal Mill Parameters" header
+#  Row+1  │ "COAL MILLS" | Mill-A(1) | Mill-B(2) | Mill-C(3) | Mill-D(4)
+#          │              | Mill-E(5) | Mill-F(6) | Mill-G(7) | Mill-H(8)
+#  Row+2  │ Coal Flow (TPH)    → cols 1–8
+#  Row+3  │ PA Flow (TPH)      → cols 1–8
+#  Row+4  │ Mill DP (mmwc)     → cols 1–8
+#  Row+5  │ Mill Outlet Temp   → cols 1–8
+#  Row+6  │ Mill Current (Amp) → cols 1–8
 # ─────────────────────────────────────────────────────────────
 def extract_coal_mill_params(df):
-    header_row = find_row(df, "COAL MILLS")
+    # "Coal Mill Parameters" is the section header (row+0)
+    # "COAL MILLS" label with mill names is row+1
+    header_row = find_row(df, "COAL MILL PARAMETERS")
     if header_row is None:
         return None
 
-    mills = ["A", "B", "C", "D", "E", "F"]
-    col_offset = 1  # Mill A starts at col index 1
+    mills = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
     def get(r_offset, col_idx):
         try:
@@ -195,13 +165,12 @@ def extract_coal_mill_params(df):
 
     result = []
     for i, mill in enumerate(mills):
-        col = col_offset + i
+        col = 1 + i   # Mill A = col 1, Mill B = col 2 … Mill H = col 8
         result.append({
             "mill":             mill,
-            "coal_flow_tph":    get(1, col),
-            "pa_flow_tph":      get(2, col),
-            "mill_dp_mmwc":     get(3, col),
-            "o2_at_aph_pcr":    get(4, col),   # may be blank for some mills
+            "coal_flow_tph":    get(2, col),
+            "pa_flow_tph":      get(3, col),
+            "mill_dp_mmwc":     get(4, col),
             "mill_outlet_temp": get(5, col),
             "mill_current_amp": get(6, col),
         })
@@ -210,13 +179,9 @@ def extract_coal_mill_params(df):
 
 
 # ─────────────────────────────────────────────────────────────
-# DB HELPERS — insert boiler params & coal mill params
+# DB: upsert boiler_mill_params
 # ─────────────────────────────────────────────────────────────
 def upsert_boiler_mill_params(cur, run_id, params):
-    """
-    DELETE existing row for this run_id then INSERT fresh.
-    Table: boiler_mill_params
-    """
     cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     cur.execute("""
         INSERT INTO boiler_mill_params (
@@ -236,58 +201,47 @@ def upsert_boiler_mill_params(cur, run_id, params):
             fg_temp_after_aph_l,   fg_temp_after_aph_r
         ) VALUES (
             %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s,
-            %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s
         )
     """, (
         run_id,
-        params.get("main_steam_pressure_l"),   params.get("main_steam_pressure_r"),
-        params.get("main_steam_flow_l"),        params.get("main_steam_flow_r"),
-        params.get("superheat_spray_l"),        params.get("superheat_spray_r"),
-        params.get("reheat_spray_l"),           params.get("reheat_spray_r"),
-        params.get("o2_aph_inlet_pcr_l"),       params.get("o2_aph_inlet_pcr_r"),
-        params.get("wind_box_dp_l"),            params.get("wind_box_dp_r"),
+        params.get("main_steam_pressure_l"), params.get("main_steam_pressure_r"),
+        params.get("main_steam_flow_l"),     params.get("main_steam_flow_r"),
+        params.get("superheat_spray_l"),     params.get("superheat_spray_r"),
+        params.get("reheat_spray_l"),        params.get("reheat_spray_r"),
+        params.get("o2_aph_inlet_pcr_l"),    params.get("o2_aph_inlet_pcr_r"),
+        params.get("wind_box_dp_l"),         params.get("wind_box_dp_r"),
         params.get("total_pa_flow"),
-        params.get("fg_temp_after_dpsh_l"),     params.get("fg_temp_after_dpsh_r"),
-        params.get("fg_temp_after_psh_l"),      params.get("fg_temp_after_psh_r"),
-        params.get("fg_temp_after_rh_l"),       params.get("fg_temp_after_rh_r"),
-        params.get("fg_temp_after_hsh_l"),      params.get("fg_temp_after_hsh_r"),
-        params.get("fg_temp_after_eco_l"),      params.get("fg_temp_after_eco_r"),
-        params.get("fg_temp_after_aph_l"),      params.get("fg_temp_after_aph_r"),
+        params.get("fg_temp_after_dpsh_l"),  params.get("fg_temp_after_dpsh_r"),
+        params.get("fg_temp_after_psh_l"),   params.get("fg_temp_after_psh_r"),
+        params.get("fg_temp_after_rh_l"),    params.get("fg_temp_after_rh_r"),
+        params.get("fg_temp_after_hsh_l"),   params.get("fg_temp_after_hsh_r"),
+        params.get("fg_temp_after_eco_l"),   params.get("fg_temp_after_eco_r"),
+        params.get("fg_temp_after_aph_l"),   params.get("fg_temp_after_aph_r"),
     ))
 
 
+# ─────────────────────────────────────────────────────────────
+# DB: upsert coal_mill_params
+# ─────────────────────────────────────────────────────────────
 def upsert_coal_mill_params(cur, run_id, mills):
-    """
-    DELETE existing rows for this run_id then INSERT fresh.
-    Table: coal_mill_params
-    """
     cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
     for m in mills:
         cur.execute("""
             INSERT INTO coal_mill_params (
                 run_id, mill,
                 coal_flow_tph, pa_flow_tph, mill_dp_mmwc,
-                o2_at_aph_pcr, mill_outlet_temp, mill_current_amp
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                mill_outlet_temp, mill_current_amp
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (
             run_id,
             m["mill"],
             m.get("coal_flow_tph"),
             m.get("pa_flow_tph"),
             m.get("mill_dp_mmwc"),
-            m.get("o2_at_aph_pcr"),
             m.get("mill_outlet_temp"),
             m.get("mill_current_amp"),
         ))
@@ -305,32 +259,27 @@ async def upload_file(
     notes: str = Form("")
 ):
     try:
-        # 1. Save file
         file_id = str(uuid.uuid4())
         file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
-
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # 2. Read ALL sheets
         df_dict = pd.read_excel(file_path, sheet_name=None, header=None)
 
         conn = get_db()
         cur = conn.cursor()
-
         results = []
 
         for sheet_name, df in df_dict.items():
 
-            # 3. Extract date
+            # ── Date ──────────────────────────────────────────
             run_date = extract_date_from_sheet(df)
             if not run_date:
                 print(f"Skipping sheet {sheet_name} (no date found)")
                 continue
 
-            # ── 4a. Extract Elevation Table ───────────────────
+            # ── Elevation Table ───────────────────────────────
             elevation, c1, c2, c3, c4, avg = [], [], [], [], [], []
-
             start = None
             for i, row in df.iterrows():
                 if "ELEVATION" in str(row[0]).upper():
@@ -355,65 +304,51 @@ async def upload_file(
             if len(elevation) == 0:
                 continue
 
-            # ── 4b. Extract Boiler & Mill Parameters ──────────
+            # ── Boiler & Mill Params ──────────────────────────
             boiler_params = extract_boiler_mill_params(df)
 
-            # ── 4c. Extract Coal Mill Parameters ──────────────
+            # ── Coal Mill Params ──────────────────────────────
             coal_mills = extract_coal_mill_params(df)
 
-            # ── 5. UPSERT RUN ─────────────────────────────────
+            # ── Upsert Run ────────────────────────────────────
             cur.callproc("sp_create_run", (
-                station_id,
-                unit_id,
-                file.filename,
-                datetime.now(),
-                run_date,
-                uploaded_by,
-                notes
+                station_id, unit_id, file.filename,
+                datetime.now(), run_date, uploaded_by, notes
             ))
             run_id = cur.fetchall()[0]["run_id"]
 
-            # ── 6. Elevation points JSON ───────────────────────
-            points = []
-            for i in range(len(elevation)):
-                points.append({
-                    "elevation": elevation[i],
-                    "c1": c1[i],
-                    "c2": c2[i],
-                    "c3": c3[i],
-                    "c4": c4[i],
-                    "avg": avg[i]
-                })
+            # ── Elevation Points ──────────────────────────────
+            points = [
+                {"elevation": elevation[i], "c1": c1[i], "c2": c2[i],
+                 "c3": c3[i], "c4": c4[i], "avg": avg[i]}
+                for i in range(len(elevation))
+            ]
+            cur.callproc("sp_add_run_points_bulk", (run_id, json.dumps(points)))
 
-            cur.callproc("sp_add_run_points_bulk", (
-                run_id,
-                json.dumps(points)
-            ))
-
-            # ── 7. Boiler & Mill params ────────────────────────
+            # ── Boiler params ─────────────────────────────────
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
 
-            # ── 8. Coal Mill params ────────────────────────────
+            # ── Coal Mill params ──────────────────────────────
             if coal_mills:
                 upsert_coal_mill_params(cur, run_id, coal_mills)
 
             results.append({
-                "sheet":              sheet_name,
-                "run_id":             run_id,
-                "date":               str(run_date),
-                "rows":               len(points),
-                "boiler_params":      boiler_params is not None,
-                "coal_mill_rows":     len(coal_mills) if coal_mills else 0,
+                "sheet":          sheet_name,
+                "run_id":         run_id,
+                "date":           str(run_date),
+                "rows":           len(points),
+                "boiler_params":  boiler_params is not None,
+                "coal_mill_rows": len(coal_mills) if coal_mills else 0,
             })
 
         conn.commit()
         conn.close()
 
         return {
-            "message":                "Upload processed successfully",
+            "message": "Upload processed successfully",
             "total_sheets_processed": len(results),
-            "runs":                   results
+            "runs": results
         }
 
     except Exception as e:
@@ -432,15 +367,13 @@ def get_history(station_id: int, unit_id: int):
     return data
 
 
-# ─── GET SINGLE RUN ───────────────────────────────────────────
+# ─── GET SINGLE RUN (elevation profile) ──────────────────────
 @app.get("/history/{run_id}")
 def get_run(run_id: int):
     conn = get_db()
     cur = conn.cursor()
-
     cur.callproc("sp_get_run_profile", (run_id,))
     rows = cur.fetchall()
-
     conn.close()
     return {
         "elevation": [r["elevation"] for r in rows],
@@ -452,21 +385,18 @@ def get_run(run_id: int):
     }
 
 
-# ─── GET BOILER & MILL PARAMS FOR A RUN ───────────────────────
+# ─── GET BOILER & MILL PARAMS FOR A RUN ──────────────────────
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT * FROM boiler_mill_params WHERE run_id = %s",
-        (run_id,)
-    )
+    cur.execute("SELECT * FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     data = cur.fetchone()
     conn.close()
     return data or {}
 
 
-# ─── GET COAL MILL PARAMS FOR A RUN ───────────────────────────
+# ─── GET COAL MILL PARAMS FOR A RUN ──────────────────────────
 @app.get("/history/{run_id}/coal-mill-params")
 def get_coal_mill_params(run_id: int):
     conn = get_db()
@@ -480,7 +410,7 @@ def get_coal_mill_params(run_id: int):
     return data
 
 
-# ─── COMPARE RUNS ─────────────────────────────────────────────
+# ─── COMPARE RUNS ────────────────────────────────────────────
 @app.get("/compare")
 def compare_runs(ids: str):
     conn = get_db()
@@ -491,7 +421,7 @@ def compare_runs(ids: str):
     return data
 
 
-# ─── STATIONS ─────────────────────────────────────────────────
+# ─── STATIONS ────────────────────────────────────────────────
 @app.get("/stations")
 def get_stations():
     conn = get_db()
@@ -502,7 +432,7 @@ def get_stations():
     return data
 
 
-# ─── UNITS ────────────────────────────────────────────────────
+# ─── UNITS ───────────────────────────────────────────────────
 @app.get("/units/{station_id}")
 def get_units(station_id: int):
     conn = get_db()
@@ -513,7 +443,7 @@ def get_units(station_id: int):
     return data
 
 
-# ─── MAPPING DATES ────────────────────────────────────────────
+# ─── MAPPING DATES ───────────────────────────────────────────
 @app.get("/mapping-dates")
 def get_mapping_dates(
     station_id: int = Query(...),
