@@ -154,11 +154,12 @@ def extract_coal_mill_params(df):
 
 
 def enc(v):
-    return encrypt_at_rest(v)
+    return v
 
 
 def upsert_boiler_mill_params(cur, run_id, params):
     cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
+
     cur.execute(
         """
         INSERT INTO boiler_mill_params (
@@ -186,37 +187,38 @@ def upsert_boiler_mill_params(cur, run_id, params):
         """,
         (
             run_id,
-            enc(params.get("main_steam_pressure_l")),
-            enc(params.get("main_steam_pressure_r")),
-            enc(params.get("main_steam_flow_l")),
-            enc(params.get("main_steam_flow_r")),
-            enc(params.get("superheat_spray_l")),
-            enc(params.get("superheat_spray_r")),
-            enc(params.get("reheat_spray_l")),
-            enc(params.get("reheat_spray_r")),
-            enc(params.get("o2_aph_inlet_pcr_l")),
-            enc(params.get("o2_aph_inlet_pcr_r")),
-            enc(params.get("wind_box_dp_l")),
-            enc(params.get("wind_box_dp_r")),
-            enc(params.get("total_pa_flow")),
-            enc(params.get("fg_temp_after_dpsh_l")),
-            enc(params.get("fg_temp_after_dpsh_r")),
-            enc(params.get("fg_temp_after_psh_l")),
-            enc(params.get("fg_temp_after_psh_r")),
-            enc(params.get("fg_temp_after_rh_l")),
-            enc(params.get("fg_temp_after_rh_r")),
-            enc(params.get("fg_temp_after_hsh_l")),
-            enc(params.get("fg_temp_after_hsh_r")),
-            enc(params.get("fg_temp_after_eco_l")),
-            enc(params.get("fg_temp_after_eco_r")),
-            enc(params.get("fg_temp_after_aph_l")),
-            enc(params.get("fg_temp_after_aph_r")),
+            params.get("main_steam_pressure_l"),
+            params.get("main_steam_pressure_r"),
+            params.get("main_steam_flow_l"),
+            params.get("main_steam_flow_r"),
+            params.get("superheat_spray_l"),
+            params.get("superheat_spray_r"),
+            params.get("reheat_spray_l"),
+            params.get("reheat_spray_r"),
+            params.get("o2_aph_inlet_pcr_l"),
+            params.get("o2_aph_inlet_pcr_r"),
+            params.get("wind_box_dp_l"),
+            params.get("wind_box_dp_r"),
+            params.get("total_pa_flow"),
+            params.get("fg_temp_after_dpsh_l"),
+            params.get("fg_temp_after_dpsh_r"),
+            params.get("fg_temp_after_psh_l"),
+            params.get("fg_temp_after_psh_r"),
+            params.get("fg_temp_after_rh_l"),
+            params.get("fg_temp_after_rh_r"),
+            params.get("fg_temp_after_hsh_l"),
+            params.get("fg_temp_after_hsh_r"),
+            params.get("fg_temp_after_eco_l"),
+            params.get("fg_temp_after_eco_r"),
+            params.get("fg_temp_after_aph_l"),
+            params.get("fg_temp_after_aph_r"),
         ),
     )
 
 
 def upsert_coal_mill_params(cur, run_id, mills):
     cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
+
     for m in mills:
         cur.execute(
             """
@@ -228,16 +230,14 @@ def upsert_coal_mill_params(cur, run_id, mills):
             """,
             (
                 run_id,
-                m["mill"],
-                enc(m.get("coal_flow_tph")),
-                enc(m.get("pa_flow_tph")),
-                enc(m.get("mill_dp_mmwc")),
-                enc(m.get("mill_outlet_temp")),
-                enc(m.get("mill_current_amp")),
+                m.get("mill"),
+                m.get("coal_flow_tph"),
+                m.get("pa_flow_tph"),
+                m.get("mill_dp_mmwc"),
+                m.get("mill_outlet_temp"),
+                m.get("mill_current_amp"),
             ),
         )
-
-
 # ── Decrypt helpers ────────────────────────────────────────────
 _BOILER_FIELDS = [
     "main_steam_pressure_l", "main_steam_pressure_r",
