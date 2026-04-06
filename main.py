@@ -2,18 +2,15 @@
 main.py — Furnace Flame Temperature Mapping API
 ================================================
 
-Encryption layers
------------------
-  Layer 1  Transit-IN   AES-256-GCM     → decrypt every incoming encrypted body
-  Layer 2  At-Rest      AES-256-CBC     → encrypt/decrypt individual DB columns
-  Layer 3  Transit-OUT  AES-256-GCM     → encrypt every outgoing JSON response
-
-See crypto.py for full algorithm documentation and key-loading rules.
+Encryption
+----------
+  Layer 2 ONLY — At-Rest AES-256-CBC + HMAC-SHA256
+  Data is encrypted when written to the DB and decrypted when read.
+  Transit is plain HTTP — no WebCrypto required on the client.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, Query, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import pandas as pd
 import pymysql
 import json
@@ -23,14 +20,9 @@ import os
 from datetime import datetime
 import re
 
-# ── Encryption helpers ─────────────────────────────────────
 from crypto import (
-    decrypt_transit_in_json,
     encrypt_at_rest,
-    decrypt_at_rest,
     decrypt_at_rest_float,
-    encrypt_transit_out,
-    TransitDecryptionError,
 )
 
 app = FastAPI()
@@ -50,61 +42,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────────────────────
-# MIDDLEWARE  (Layer 1 — Transit-IN Decryption)
-# ─────────────────────────────────────────────────────────────
-# When a client sends a JSON body with the shape:
-#   { "iv": "...", "tag": "...", "ct": "..." }
-# the middleware decrypts it and replaces the body so the endpoint
-# sees normal plain data.
-#
-# Requests whose body is NOT encrypted (e.g. file uploads with
-# multipart/form-data) are passed through unchanged.
-# ─────────────────────────────────────────────────────────────
 
-@app.middleware("http")
-async def transit_in_decryption_middleware(request: Request, call_next):
-    content_type = request.headers.get("content-type", "")
-
-    # Only attempt JSON-body decryption for application/json requests
-    if "application/json" in content_type:
-        try:
-            raw_body = await request.body()
-            if raw_body:
-                payload = json.loads(raw_body)
-                # Detect encrypted envelope
-                if isinstance(payload, dict) and {"iv", "tag", "ct"}.issubset(payload):
-                    try:
-                        decrypted = decrypt_transit_in_json(payload)
-                    except TransitDecryptionError as exc:
-                        return JSONResponse(
-                            status_code=400,
-                            content={"error": f"Transit decryption failed: {exc}"},
-                        )
-                    # Rebuild the request body with the decrypted content
-                    decrypted_bytes = json.dumps(decrypted).encode()
-
-                    async def new_body() -> bytes:
-                        return decrypted_bytes
-
-                    request._body = decrypted_bytes   # FastAPI stashes the body here
-        except Exception:
-            pass  # Non-JSON or empty body — pass through
-
-    response = await call_next(request)
-    return response
-
-
-# ─────────────────────────────────────────────────────────────
-# LAYER 3 helper — wrap any return value in an encrypted envelope
-# ─────────────────────────────────────────────────────────────
-
-def encrypted_response(data) -> JSONResponse:
-    """Encrypt data with AES-256-GCM and return as a JSONResponse."""
-    return JSONResponse(content=encrypt_transit_out(data))
-
-
-# ─── MYSQL CONNECTION ─────────────────────────────────────────
+# ─── MYSQL CONNECTION ──────────────────────────────────────────
 def get_db():
     return pymysql.connect(
         host="localhost",
@@ -119,9 +58,6 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper: Clean numeric value
-# ─────────────────────────────────────────────────────────────
 def clean(val):
     try:
         if pd.isna(val):
@@ -131,9 +67,6 @@ def clean(val):
         return None
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper: Extract date from D2 → 'Date :- DD/MM/YYYY'
-# ─────────────────────────────────────────────────────────────
 def extract_date_from_sheet(df):
     try:
         cell_value = str(df.iloc[1, 3])
@@ -146,9 +79,6 @@ def extract_date_from_sheet(df):
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper: Find row index where col[search_col] contains keyword
-# ─────────────────────────────────────────────────────────────
 def find_row(df, keyword, search_col=0):
     for i, row in df.iterrows():
         if keyword.upper() in str(row[search_col]).upper():
@@ -156,9 +86,6 @@ def find_row(df, keyword, search_col=0):
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper: Extract Boiler & Mill Parameters
-# ─────────────────────────────────────────────────────────────
 def extract_boiler_mill_params(df):
     header_row = find_row(df, "BOILER & MILL PARAMETERS")
     if header_row is None:
@@ -199,9 +126,6 @@ def extract_boiler_mill_params(df):
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# Helper: Extract Coal Mill Parameters
-# ─────────────────────────────────────────────────────────────
 def extract_coal_mill_params(df):
     header_row = find_row(df, "COAL MILL PARAMETERS")
     if header_row is None:
@@ -226,22 +150,13 @@ def extract_coal_mill_params(df):
             "mill_outlet_temp": get(5, col),
             "mill_current_amp": get(6, col),
         })
-
     return result
 
 
-# ─────────────────────────────────────────────────────────────
-# LAYER 2 helpers — encrypt params dicts before DB insertion
-# ─────────────────────────────────────────────────────────────
-
 def enc(v):
-    """Shorthand: encrypt a single value for at-rest storage."""
     return encrypt_at_rest(v)
 
 
-# ─────────────────────────────────────────────────────────────
-# DB: upsert boiler_mill_params  (values encrypted at rest)
-# ─────────────────────────────────────────────────────────────
 def upsert_boiler_mill_params(cur, run_id, params):
     cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     cur.execute(
@@ -271,7 +186,6 @@ def upsert_boiler_mill_params(cur, run_id, params):
         """,
         (
             run_id,
-            # ── Layer 2: encrypt each value individually ──────────────
             enc(params.get("main_steam_pressure_l")),
             enc(params.get("main_steam_pressure_r")),
             enc(params.get("main_steam_flow_l")),
@@ -301,9 +215,6 @@ def upsert_boiler_mill_params(cur, run_id, params):
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# DB: upsert coal_mill_params  (values encrypted at rest)
-# ─────────────────────────────────────────────────────────────
 def upsert_coal_mill_params(cur, run_id, mills):
     cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
     for m in mills:
@@ -317,7 +228,7 @@ def upsert_coal_mill_params(cur, run_id, mills):
             """,
             (
                 run_id,
-                m["mill"],   # mill letter (A-H) — not sensitive, not encrypted
+                m["mill"],
                 enc(m.get("coal_flow_tph")),
                 enc(m.get("pa_flow_tph")),
                 enc(m.get("mill_dp_mmwc")),
@@ -327,10 +238,8 @@ def upsert_coal_mill_params(cur, run_id, mills):
         )
 
 
-# ─────────────────────────────────────────────────────────────
-# DB: decrypt boiler_mill_params row from DB
-# ─────────────────────────────────────────────────────────────
-_BOILER_NUMERIC_FIELDS = [
+# ── Decrypt helpers ────────────────────────────────────────────
+_BOILER_FIELDS = [
     "main_steam_pressure_l", "main_steam_pressure_r",
     "main_steam_flow_l",     "main_steam_flow_r",
     "superheat_spray_l",     "superheat_spray_r",
@@ -345,47 +254,36 @@ _BOILER_NUMERIC_FIELDS = [
     "fg_temp_after_eco_l",   "fg_temp_after_eco_r",
     "fg_temp_after_aph_l",   "fg_temp_after_aph_r",
 ]
-
-_COAL_NUMERIC_FIELDS = [
-    "coal_flow_tph", "pa_flow_tph", "mill_dp_mmwc",
-    "mill_outlet_temp", "mill_current_amp",
-]
+_COAL_FIELDS = ["coal_flow_tph", "pa_flow_tph", "mill_dp_mmwc", "mill_outlet_temp", "mill_current_amp"]
 
 
-def _decrypt_boiler_row(row: dict) -> dict:
+def _dec_boiler(row):
     if not row:
         return row
     out = dict(row)
-    for field in _BOILER_NUMERIC_FIELDS:
-        if field in out:
-            out[field] = decrypt_at_rest_float(out[field])
+    for f in _BOILER_FIELDS:
+        if f in out:
+            out[f] = decrypt_at_rest_float(out[f])
     return out
 
 
-def _decrypt_coal_row(row: dict) -> dict:
+def _dec_coal(row):
     out = dict(row)
-    for field in _COAL_NUMERIC_FIELDS:
-        if field in out:
-            out[field] = decrypt_at_rest_float(out[field])
+    for f in _COAL_FIELDS:
+        if f in out:
+            out[f] = decrypt_at_rest_float(out[f])
     return out
 
 
-def _decrypt_profile_row(row: dict) -> dict:
-    """Decrypt elevation profile point (profile_points table)."""
+def _dec_profile(row):
     out = dict(row)
-    for field in ["elevation", "c1", "c2", "c3", "c4", "avg_val"]:
-        if field in out:
-            out[field] = decrypt_at_rest_float(out[field])
+    for f in ["elevation", "c1", "c2", "c3", "c4", "avg_val"]:
+        if f in out:
+            out[f] = decrypt_at_rest_float(out[f])
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-# UPLOAD API
-# ─────────────────────────────────────────────────────────────
-# NOTE: multipart/form-data (file upload) bypasses transit-IN decryption
-# intentionally — the file bytes are raw Excel, not an encrypted JSON blob.
-# The form fields (station_id, unit_id, etc.) also arrive in plain form.
-# ─────────────────────────────────────────────────────────────
+# ─── UPLOAD ───────────────────────────────────────────────────
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -401,29 +299,22 @@ async def upload_file(
             shutil.copyfileobj(file.file, f)
 
         df_dict = pd.read_excel(file_path, sheet_name=None, header=None)
-
         conn = get_db()
         cur = conn.cursor()
         results = []
 
         for sheet_name, df in df_dict.items():
-
-            # ── Date ──────────────────────────────────────────
             run_date = extract_date_from_sheet(df)
             if not run_date:
-                print(f"Skipping sheet {sheet_name} (no date found)")
                 continue
 
-            # ── Elevation Table ───────────────────────────────
             elevation, c1, c2, c3, c4, avg = [], [], [], [], [], []
             start = None
             for i, row in df.iterrows():
                 if "ELEVATION" in str(row[0]).upper():
                     start = i + 1
                     break
-
             if start is None:
-                print(f"Skipping sheet {sheet_name} (no elevation table)")
                 continue
 
             boiler_start = find_row(df, "BOILER & MILL PARAMETERS")
@@ -441,41 +332,31 @@ async def upload_file(
                 c4.append(clean(row[4]))
                 avg.append(clean(row[5]))
 
-            if len(elevation) == 0:
+            if not elevation:
                 continue
 
-            # ── Boiler & Mill Params ──────────────────────────
             boiler_params = extract_boiler_mill_params(df)
+            coal_mills    = extract_coal_mill_params(df)
 
-            # ── Coal Mill Params ──────────────────────────────
-            coal_mills = extract_coal_mill_params(df)
-
-            # ── Upsert Run ────────────────────────────────────
-            cur.callproc(
-                "sp_create_run",
-                (station_id, unit_id, file.filename,
-                 datetime.now(), run_date, uploaded_by, notes),
-            )
+            cur.callproc("sp_create_run", (
+                station_id, unit_id, file.filename,
+                datetime.now(), run_date, uploaded_by, notes,
+            ))
             run_id = cur.fetchall()[0]["run_id"]
 
-            # ── Elevation Points — encrypt each value at rest ─
-            points = []
-            for i in range(len(elevation)):
-                points.append({
+            points = [
+                {
                     "elevation": enc(elevation[i]),
-                    "c1":        enc(c1[i]),
-                    "c2":        enc(c2[i]),
-                    "c3":        enc(c3[i]),
-                    "c4":        enc(c4[i]),
-                    "avg":       enc(avg[i]),
-                })
+                    "c1": enc(c1[i]), "c2": enc(c2[i]),
+                    "c3": enc(c3[i]), "c4": enc(c4[i]),
+                    "avg": enc(avg[i]),
+                }
+                for i in range(len(elevation))
+            ]
             cur.callproc("sp_add_run_points_bulk", (run_id, json.dumps(points)))
 
-            # ── Boiler params — encrypt at rest ───────────────
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
-
-            # ── Coal Mill params — encrypt at rest ────────────
             if coal_mills:
                 upsert_coal_mill_params(cur, run_id, coal_mills)
 
@@ -490,20 +371,14 @@ async def upload_file(
 
         conn.commit()
         conn.close()
-
-        # ── Layer 3: encrypt the response ─────────────────────
-        return encrypted_response({
-            "message": "Upload processed successfully",
-            "total_sheets_processed": len(results),
-            "runs": results,
-        })
+        return {"message": "Upload processed successfully", "total_sheets_processed": len(results), "runs": results}
 
     except Exception as e:
         import traceback
-        return encrypted_response({"error": str(e), "trace": traceback.format_exc()})
+        return {"error": str(e), "trace": traceback.format_exc()}
 
 
-# ─── GET RUNS (HISTORY) ───────────────────────────────────────
+# ─── HISTORY ──────────────────────────────────────────────────
 @app.get("/history")
 def get_history(station_id: int, unit_id: int):
     conn = get_db()
@@ -511,12 +386,9 @@ def get_history(station_id: int, unit_id: int):
     cur.callproc("sp_get_runs", (station_id, unit_id, "2000-01-01", "2100-01-01"))
     data = cur.fetchall()
     conn.close()
-    # runs table columns (filename, uploaded_by, notes) could also be
-    # encrypted at rest if desired; for now we return them as-is.
-    return encrypted_response(data)
+    return data
 
 
-# ─── GET SINGLE RUN (elevation profile) ──────────────────────
 @app.get("/history/{run_id}")
 def get_run(run_id: int):
     conn = get_db()
@@ -524,21 +396,17 @@ def get_run(run_id: int):
     cur.callproc("sp_get_run_profile", (run_id,))
     rows = cur.fetchall()
     conn.close()
-
-    # ── Layer 2: decrypt each row coming out of the DB ────────
-    decrypted = [_decrypt_profile_row(r) for r in rows]
-
-    return encrypted_response({
-        "elevation": [r["elevation"] for r in decrypted],
-        "corner1":   [r["c1"]        for r in decrypted],
-        "corner2":   [r["c2"]        for r in decrypted],
-        "corner3":   [r["c3"]        for r in decrypted],
-        "corner4":   [r["c4"]        for r in decrypted],
-        "average":   [r["avg_val"]   for r in decrypted],
-    })
+    dec = [_dec_profile(r) for r in rows]
+    return {
+        "elevation": [r["elevation"] for r in dec],
+        "corner1":   [r["c1"]        for r in dec],
+        "corner2":   [r["c2"]        for r in dec],
+        "corner3":   [r["c3"]        for r in dec],
+        "corner4":   [r["c4"]        for r in dec],
+        "average":   [r["avg_val"]   for r in dec],
+    }
 
 
-# ─── GET BOILER & MILL PARAMS FOR A RUN ──────────────────────
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
     conn = get_db()
@@ -546,30 +414,20 @@ def get_boiler_params(run_id: int):
     cur.execute("SELECT * FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     data = cur.fetchone()
     conn.close()
-
-    # ── Layer 2: decrypt before sending ──────────────────────
-    decrypted = _decrypt_boiler_row(data or {})
-    return encrypted_response(decrypted)
+    return _dec_boiler(data or {})
 
 
-# ─── GET COAL MILL PARAMS FOR A RUN ──────────────────────────
 @app.get("/history/{run_id}/coal-mill-params")
 def get_coal_mill_params(run_id: int):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT * FROM coal_mill_params WHERE run_id = %s ORDER BY mill",
-        (run_id,),
-    )
+    cur.execute("SELECT * FROM coal_mill_params WHERE run_id = %s ORDER BY mill", (run_id,))
     data = cur.fetchall()
     conn.close()
-
-    # ── Layer 2: decrypt each mill row ────────────────────────
-    decrypted = [_decrypt_coal_row(r) for r in data]
-    return encrypted_response(decrypted)
+    return [_dec_coal(r) for r in data]
 
 
-# ─── COMPARE RUNS ────────────────────────────────────────────
+# ─── MISC ─────────────────────────────────────────────────────
 @app.get("/compare")
 def compare_runs(ids: str):
     conn = get_db()
@@ -577,10 +435,9 @@ def compare_runs(ids: str):
     cur.callproc("sp_get_comparison_data", (ids,))
     data = cur.fetchall()
     conn.close()
-    return encrypted_response(data)
+    return data
 
 
-# ─── STATIONS ────────────────────────────────────────────────
 @app.get("/stations")
 def get_stations():
     conn = get_db()
@@ -588,10 +445,9 @@ def get_stations():
     cur.callproc("sp_get_stations")
     data = cur.fetchall()
     conn.close()
-    return encrypted_response(data)
+    return data
 
 
-# ─── UNITS ───────────────────────────────────────────────────
 @app.get("/units/{station_id}")
 def get_units(station_id: int):
     conn = get_db()
@@ -599,18 +455,14 @@ def get_units(station_id: int):
     cur.callproc("sp_get_units_by_station", (station_id,))
     data = cur.fetchall()
     conn.close()
-    return encrypted_response(data)
+    return data
 
 
-# ─── MAPPING DATES ───────────────────────────────────────────
 @app.get("/mapping-dates")
-def get_mapping_dates(
-    station_id: int = Query(...),
-    unit_id:    int = Query(...),
-):
+def get_mapping_dates(station_id: int = Query(...), unit_id: int = Query(...)):
     conn = get_db()
     cur = conn.cursor()
     cur.callproc("sp_get_mapping_dates", (station_id, unit_id))
     rows = cur.fetchall()
     conn.close()
-    return encrypted_response(rows)
+    return rows
