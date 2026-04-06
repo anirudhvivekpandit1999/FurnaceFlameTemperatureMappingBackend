@@ -398,14 +398,15 @@ def get_run(run_id: int):
     cur.callproc("sp_get_run_profile", (run_id,))
     rows = cur.fetchall()
     conn.close()
+
     return {
-    "elevation": [r["elevation"] for r in rows],
-    "corner1":   [r["c1"]        for r in rows],
-    "corner2":   [r["c2"]        for r in rows],
-    "corner3":   [r["c3"]        for r in rows],
-    "corner4":   [r["c4"]        for r in rows],
-    "average":   [r["avg_val"]   for r in rows],
-}
+        "elevation": [r["elevation"] for r in rows],
+        "corner1":   [r["c1"]        for r in rows],
+        "corner2":   [r["c2"]        for r in rows],
+        "corner3":   [r["c3"]        for r in rows],
+        "corner4":   [r["c4"]        for r in rows],
+        "average":   [r["avg_val"]   for r in rows],
+    }
 
 
 @app.get("/history/{run_id}/boiler-params")
@@ -415,7 +416,7 @@ def get_boiler_params(run_id: int):
     cur.execute("SELECT * FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     data = cur.fetchone()
     conn.close()
-    return _dec_boiler(data or {})
+    return data or {}
 
 
 @app.get("/history/{run_id}/coal-mill-params")
@@ -425,7 +426,7 @@ def get_coal_mill_params(run_id: int):
     cur.execute("SELECT * FROM coal_mill_params WHERE run_id = %s ORDER BY mill", (run_id,))
     data = cur.fetchall()
     conn.close()
-    return [_dec_coal(r) for r in data]
+    return data
 
 
 # ─── MISC ─────────────────────────────────────────────────────
