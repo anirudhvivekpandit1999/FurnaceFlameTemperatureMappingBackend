@@ -468,3 +468,25 @@ def get_mapping_dates(station_id: int = Query(...), unit_id: int = Query(...)):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+@app.delete("/runs/{run_id}")
+def delete_run(run_id: int):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Delete dependent data first (IMPORTANT for FK safety)
+        cur.execute("DELETE FROM profile_points WHERE run_id = %s", (run_id,))
+        cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
+        cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
+        
+        # Finally delete run
+        cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
+
+        conn.commit()
+        conn.close()
+
+        return {"message": f"Run {run_id} deleted successfully"}
+
+    except Exception as e:
+        return {"error": str(e)}
