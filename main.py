@@ -345,14 +345,16 @@ async def upload_file(
             run_id = cur.fetchall()[0]["run_id"]
 
             points = [
-                {
-                    "elevation": enc(elevation[i]),
-                    "c1": enc(c1[i]), "c2": enc(c2[i]),
-                    "c3": enc(c3[i]), "c4": enc(c4[i]),
-                    "avg": enc(avg[i]),
-                }
-                for i in range(len(elevation))
-            ]
+    {
+        "elevation": elevation[i],
+        "c1": c1[i],
+        "c2": c2[i],
+        "c3": c3[i],
+        "c4": c4[i],
+        "avg": avg[i],
+    }
+    for i in range(len(elevation))
+]
             cur.callproc("sp_add_run_points_bulk", (run_id, json.dumps(points)))
 
             if boiler_params:
