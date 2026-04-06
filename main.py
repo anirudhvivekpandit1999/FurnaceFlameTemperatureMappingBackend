@@ -398,15 +398,14 @@ def get_run(run_id: int):
     cur.callproc("sp_get_run_profile", (run_id,))
     rows = cur.fetchall()
     conn.close()
-    dec = [_dec_profile(r) for r in rows]
     return {
-        "elevation": [r["elevation"] for r in dec],
-        "corner1":   [r["c1"]        for r in dec],
-        "corner2":   [r["c2"]        for r in dec],
-        "corner3":   [r["c3"]        for r in dec],
-        "corner4":   [r["c4"]        for r in dec],
-        "average":   [r["avg_val"]   for r in dec],
-    }
+    "elevation": [r["elevation"] for r in rows],
+    "corner1":   [r["c1"]        for r in rows],
+    "corner2":   [r["c2"]        for r in rows],
+    "corner3":   [r["c3"]        for r in rows],
+    "corner4":   [r["c4"]        for r in rows],
+    "average":   [r["avg_val"]   for r in rows],
+}
 
 
 @app.get("/history/{run_id}/boiler-params")
