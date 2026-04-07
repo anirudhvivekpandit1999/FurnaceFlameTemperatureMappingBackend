@@ -364,7 +364,7 @@ async def upload_file(
     }
     for i in range(len(elevation))
 ]
-            cur.callproc("sp_add_run_points_bulk", (run_id, location, unit, json.dumps(points)))
+            cur.callproc("sp_add_run_points_bulk", (run_id, location, clean(unit), json.dumps(points)))
 
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
