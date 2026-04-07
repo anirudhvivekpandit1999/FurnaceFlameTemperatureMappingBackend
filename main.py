@@ -504,7 +504,7 @@ def delete_run(run_id: int):
 def get_upload_log():
     conn = get_db()
     cur = conn.cursor()
-    cur.callproc("sp_get_upload_log")
+    cur.callproc("sp_get_event_log")
     rows = cur.fetchall()
     conn.close()
     return rows
