@@ -32,6 +32,8 @@ origins = [
     "http://localhost:5173",
     "https://furnaceflametemperaturemapping.vercel.app",
     "http://101.53.132.91:5173",
+    "http://91.203.132.34:5173",
+
 ]
 
 app.add_middleware(
