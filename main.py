@@ -499,3 +499,12 @@ def delete_run(run_id: int):
 
     except Exception as e:
         return {"error": str(e)}
+    
+@app.get("/get-upload-log")
+def get_upload_log():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.callproc("sp_get_upload_log")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
