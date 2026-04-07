@@ -9,7 +9,7 @@ Encryption
   Transit is plain HTTP — no WebCrypto required on the client.
 """
 
-import string
+
 
 from fastapi import FastAPI, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -390,7 +390,7 @@ async def upload_file(
 
 # ─── HISTORY ──────────────────────────────────────────────────
 @app.get("/history")
-def get_history(station_id: string, unit_id: int):
+def get_history(station_id: str, unit_id: int):
     conn = get_db()
     cur = conn.cursor()
     cur.callproc("sp_get_runs", (station_id, unit_id, "2000-01-01", "2100-01-01"))
