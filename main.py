@@ -349,7 +349,7 @@ async def upload_file(
 
             cur.callproc("sp_create_run", (
                 station_id, unit_id, file.filename,
-                datetime.now(), run_date, uploaded_by, notes,location
+                datetime.now(), run_date, uploaded_by, notes,location, unit
             ))
             run_id = cur.fetchall()[0]["run_id"]
 
@@ -364,7 +364,7 @@ async def upload_file(
     }
     for i in range(len(elevation))
 ]
-            cur.callproc("sp_add_run_points_bulk", (run_id, location, clean(unit), json.dumps(points)))
+            cur.callproc("sp_add_run_points_bulk", (run_id, location, unit, json.dumps(points)))
 
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
