@@ -9,6 +9,8 @@ Encryption
   Transit is plain HTTP — no WebCrypto required on the client.
 """
 
+import string
+
 from fastapi import FastAPI, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
@@ -307,10 +309,12 @@ async def upload_file(
 
         for sheet_name, df in df_dict.items():
             run_date = extract_date_from_sheet(df)
+            
             if not run_date:
                 continue
 
             elevation, c1, c2, c3, c4, avg = [], [], [], [], [], []
+            
             start = None
             for i, row in df.iterrows():
                 if "ELEVATION" in str(row[0]).upper():
@@ -339,10 +343,12 @@ async def upload_file(
 
             boiler_params = extract_boiler_mill_params(df)
             coal_mills    = extract_coal_mill_params(df)
+            location = df.iloc[1, 0]
+
 
             cur.callproc("sp_create_run", (
                 station_id, unit_id, file.filename,
-                datetime.now(), run_date, uploaded_by, notes,
+                datetime.now(), run_date, uploaded_by, notes,location
             ))
             run_id = cur.fetchall()[0]["run_id"]
 
@@ -357,7 +363,7 @@ async def upload_file(
     }
     for i in range(len(elevation))
 ]
-            cur.callproc("sp_add_run_points_bulk", (run_id, json.dumps(points)))
+            cur.callproc("sp_add_run_points_bulk", (run_id, location, unit_id, json.dumps(points)))
 
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
@@ -384,7 +390,7 @@ async def upload_file(
 
 # ─── HISTORY ──────────────────────────────────────────────────
 @app.get("/history")
-def get_history(station_id: int, unit_id: int):
+def get_history(station_id: string, unit_id: int):
     conn = get_db()
     cur = conn.cursor()
     cur.callproc("sp_get_runs", (station_id, unit_id, "2000-01-01", "2100-01-01"))
