@@ -292,7 +292,7 @@ def _dec_profile(row):
 async def upload_file(
     file: UploadFile = File(...),
     station_id: int = 1,
-    unit_id: int = 1,
+    unit_id: int = Form(1),
     uploaded_by: str = Form("system"),
     notes: str = Form(""),
 ):
@@ -344,6 +344,7 @@ async def upload_file(
             boiler_params = extract_boiler_mill_params(df)
             coal_mills    = extract_coal_mill_params(df)
             location = df.iloc[1, 0]
+            unit = df.iloc[1,1]
 
 
             cur.callproc("sp_create_run", (
@@ -363,7 +364,7 @@ async def upload_file(
     }
     for i in range(len(elevation))
 ]
-            cur.callproc("sp_add_run_points_bulk", (run_id, location, unit_id, json.dumps(points)))
+            cur.callproc("sp_add_run_points_bulk", (run_id, location, unit, json.dumps(points)))
 
             if boiler_params:
                 upsert_boiler_mill_params(cur, run_id, boiler_params)
