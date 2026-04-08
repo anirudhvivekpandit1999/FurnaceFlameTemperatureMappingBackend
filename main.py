@@ -508,3 +508,30 @@ def get_upload_log():
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+@app.delete("/login")
+def delete_run(username : str , password : str):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.callproc("sp_login", (username, password))
+        rows = cur.fetchall()
+        if rows > 0:
+            conn.commit()
+            conn.close()
+            return {"message": "Login successful", "username": username}
+            
+        
+        else:
+                conn.commit()
+                conn.close()
+                return {"message": "Login failed", "username": username}
+                
+        
+
+        
+
+    except Exception as e:
+        return {"error": str(e)}
