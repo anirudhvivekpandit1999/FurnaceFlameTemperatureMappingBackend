@@ -523,9 +523,7 @@ def login(data: LoginRequest):
 
         cur.callproc("sp_login", (data.username, data.password))
 
-        rows = []
-        for result in cur.stored_results():
-            rows = result.fetchall()
+        rows = cur.fetchall()
 
         conn.close()
 
