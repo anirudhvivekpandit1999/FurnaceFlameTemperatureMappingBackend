@@ -510,28 +510,34 @@ def get_upload_log():
     return rows
 
 
-@app.delete("/login")
-def delete_run(username : str , password : str):
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/login")
+def login(data: LoginRequest):
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        cur.callproc("sp_login", (username, password))
-        rows = cur.fetchall()
-        if rows > 0:
-            conn.commit()
-            conn.close()
-            return {"message": "Login successful", "username": username}
-            
-        
-        else:
-                conn.commit()
-                conn.close()
-                return {"message": "Login failed", "username": username}
-                
-        
+        cur.callproc("sp_login", (data.username, data.password))
 
-        
+        rows = []
+        for result in cur.stored_results():
+            rows = result.fetchall()
+
+        conn.close()
+
+        if len(rows) > 0:
+            return {
+                "message": "Login successful",
+                "username": data.username
+            }
+        else:
+            return {
+                "message": "Login failed",
+                "username": data.username
+            }
 
     except Exception as e:
         return {"error": str(e)}
