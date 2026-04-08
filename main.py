@@ -21,6 +21,7 @@ import shutil
 import os
 from datetime import datetime
 import re
+from pydantic import BaseModel
 
 from crypto import (
     encrypt_at_rest,
