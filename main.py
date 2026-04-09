@@ -471,10 +471,10 @@ def get_units(station_id: int):
 
 
 @app.get("/mapping-dates")
-def get_mapping_dates(station_id: int = Query(...), unit_id: int = Query(...)):
+def get_mapping_dates(station: str = Query(...), unit: int = Query(...)):
     conn = get_db()
     cur = conn.cursor()
-    cur.callproc("sp_get_mapping_dates", (station_id, unit_id))
+    cur.callproc("sp_get_mapping_dates", (station, unit))
     rows = cur.fetchall()
     conn.close()
     return rows
