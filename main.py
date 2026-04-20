@@ -26,7 +26,7 @@ JWT_ALGO = "HS256"
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASS"),
+    "password": os.getenv("DB_PASS","Vishalgad5@3332"),
     "database": os.getenv("DB_NAME", "furnace_db"),
 }
 
