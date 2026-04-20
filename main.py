@@ -102,7 +102,7 @@ def login(data: LoginRequest):
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT password FROM users WHERE username=%s", (data.username,))
+    cur.execute("SELECT password FROM user_master WHERE username=%s", (data.username,))
     row = cur.fetchone()
     conn.close()
 
