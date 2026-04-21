@@ -36,7 +36,8 @@ origins = [
     "https://furnaceflametemperaturemapping.vercel.app",
     "http://101.53.132.91:5173",
     "http://91.203.132.34:5173",
-    "https://91.203.132.34:5174"
+    "https://91.203.132.34:5174",
+    "https://localhost:5174"
 
 ]
 
