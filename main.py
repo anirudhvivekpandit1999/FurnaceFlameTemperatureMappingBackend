@@ -39,6 +39,7 @@ origins = [
     "https://91.203.132.34:5174",
     "https://localhost:5174",
     "http://91.203.132.34:5176",
+    "http://localhost:5176",
 
 ]
 
