@@ -647,11 +647,14 @@ async def upload_file(
 @app.get("/history")
 def get_history(station_id: str, unit_id: int):
     conn = get_db()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)
     cur.callproc("sp_get_runs", (station_id, unit_id, "2000-01-01", "2100-01-01"))
-    data = cur.fetchall()
+    rows = []
+    for result_set in cur.stored_results():
+        rows = result_set.fetchall()
+    cur.close()
     conn.close()
-    return data
+    return rows
 
 
 @app.get("/history/{run_id}")
