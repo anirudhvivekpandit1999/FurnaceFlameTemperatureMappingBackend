@@ -660,11 +660,13 @@ def get_history(station_id: str, unit_id: int):
 @app.get("/history/{run_id}")
 def get_run(run_id: int):
     conn = get_db()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)
     cur.callproc("sp_get_run_profile", (run_id,))
-    rows = cur.fetchall()
+    rows = []
+    for result_set in cur.stored_results():
+        rows = result_set.fetchall()
+    cur.close()
     conn.close()
-
     return {
         "elevation": [r["elevation"] for r in rows],
         "corner1":   [r["c1"]        for r in rows],
@@ -673,7 +675,6 @@ def get_run(run_id: int):
         "corner4":   [r["c4"]        for r in rows],
         "average":   [r["avg_val"]   for r in rows],
     }
-
 
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
