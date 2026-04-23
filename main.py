@@ -128,50 +128,52 @@ def find_col_in_row(df, row_idx, text):
     return None
 
 def extract_metadata(df):
-    """
-    Extract BSL, unit, date, time, load_mw, coal_flow_tph, air_flow_tph,
-    coal_mills_in_service, oil_guns_in_service, burner_tilt_position.
- 
-    Based on template row 2: BSL(col0) | Unit X(col1) | | Date:-...(col3) | | Time:-(col5)
-    """
     meta = {}
- 
+
     for i in range(min(6, len(df))):
         row_vals = list(df.iloc[i])
         row_str  = ' '.join(str(v) for v in row_vals if v is not None)
- 
+
         # BSL + unit are in row 2 (iloc 1)
         if i == 1:
-            meta['bsl']  = clean(row_vals[0])
-            # unit is something like "Unit 5" – grab numeric part
+            meta['bsl'] = clean(row_vals[0])
             unit_raw = clean(row_vals[1])
             if unit_raw:
                 um = re.search(r'\d+', unit_raw)
                 meta['unit'] = um.group() if um else unit_raw
- 
-        # Date
-        dm = re.search(r'date\s*[:\-]+\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})', row_str, re.IGNORECASE)
-        if dm and 'run_date' not in meta:
-            raw = dm.group(1).replace('-', '/')
-            for fmt in ('%d/%m/%Y', '%d/%m/%y'):
-                try:
-                    meta['run_date'] = datetime.strptime(raw, fmt).date()
+
+        # ── Date: find label cell, read value from the NEXT cell ──────────
+        if 'run_date' not in meta:
+            for col_pos, val in enumerate(row_vals):
+                if val is not None and re.search(r'date\s*[:\-]+', str(val), re.IGNORECASE):
+                    # Value is in the very next cell to the right
+                    next_val = clean(row_vals[col_pos + 1]) if col_pos + 1 < len(row_vals) else None
+                    if next_val:
+                        raw = next_val.replace('-', '/')
+                        for fmt in ('%d/%m/%Y', '%d/%m/%y', '%m/%d/%Y'):
+                            try:
+                                meta['run_date'] = datetime.strptime(raw, fmt).date()
+                                break
+                            except ValueError:
+                                pass
+                    break  # stop scanning columns once label found
+
+        # ── Time: same pattern ────────────────────────────────────────────
+        if 'run_time' not in meta:
+            for col_pos, val in enumerate(row_vals):
+                if val is not None and re.search(r'time\s*[:\-]+', str(val), re.IGNORECASE):
+                    next_val = clean(row_vals[col_pos + 1]) if col_pos + 1 < len(row_vals) else None
+                    if next_val and re.match(r'\d{1,2}:\d{2}', next_val):
+                        meta['run_time'] = next_val
                     break
-                except ValueError:
-                    pass
- 
-        # Time
-        tm = re.search(r'time\s*[:\-]+\s*(\d{1,2}:\d{2})', row_str, re.IGNORECASE)
-        if tm and 'run_time' not in meta:
-            meta['run_time'] = tm.group(1)
- 
-        # Numeric KV pairs we care about
+
+        # Numeric KV pairs (unchanged)
         for col_pos, val in enumerate(row_vals):
             if val is None:
                 continue
             vs = str(val).strip()
             nv = clean(row_vals[col_pos + 1]) if col_pos + 1 < len(row_vals) else None
- 
+
             if re.search(r'load\s*\(mw\)', vs, re.IGNORECASE) and nv:
                 meta['load_mw'] = nv
             if re.search(r'total coal flow', vs, re.IGNORECASE) and nv:
@@ -184,7 +186,7 @@ def extract_metadata(df):
                 meta['oil_guns_in_service'] = nv
             if re.search(r'burner tilt', vs, re.IGNORECASE) and nv:
                 meta['burner_tilt_position'] = nv
- 
+
     return meta
 
 def extract_boiler_mill_params(df):
