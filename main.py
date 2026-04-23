@@ -679,19 +679,20 @@ def get_run(run_id: int):
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
     conn = get_db()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)
     cur.execute("SELECT * FROM boiler_mill_params WHERE run_id = %s", (run_id,))
     data = cur.fetchone()
+    cur.close()
     conn.close()
     return data or {}
-
 
 @app.get("/history/{run_id}/coal-mill-params")
 def get_coal_mill_params(run_id: int):
     conn = get_db()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)
     cur.execute("SELECT * FROM coal_mill_params WHERE run_id = %s ORDER BY mill", (run_id,))
     data = cur.fetchall()
+    cur.close()
     conn.close()
     return data
 
