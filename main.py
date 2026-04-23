@@ -726,9 +726,12 @@ def get_units(station_id: int):
 @app.get("/mapping-dates")
 def get_mapping_dates(station: str = Query(...), unit: int = Query(...)):
     conn = get_db()
-    cur = conn.cursor()
+    cur = conn.cursor(dictionary=True)        # ← add dictionary=True
     cur.callproc("sp_get_mapping_dates", (station, unit))
-    rows = cur.fetchall()
+    rows = []
+    for result_set in cur.stored_results():   # ← use stored_results()
+        rows = result_set.fetchall()
+    cur.close()
     conn.close()
     return rows
 
