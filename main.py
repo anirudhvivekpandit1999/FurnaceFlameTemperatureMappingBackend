@@ -717,6 +717,39 @@ def get_stations():
     conn.close()
     return data
 
+@app.get("/download-template")
+def download_template(location: str = Query(...), unit: int = Query(...)):
+    import copy
+    from fastapi.responses import StreamingResponse
+    from openpyxl import load_workbook
+    import io
+
+    template_path = "templates/FTM_template.xlsx"   # ← adjust to your actual template path
+
+    # Load with keep_vba=False, data_only=False — preserves ALL formatting and formulas
+    wb = load_workbook(template_path)
+    ws = wb.active
+
+    # Save existing styles from A2 and B2 before writing
+    # (openpyxl preserves style when you only set .value)
+    ws["A2"].value = location
+    ws["B2"].value = unit
+
+    # Stream the file back without saving to disk
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"FTM_template_{location}_Unit{unit}.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
 
 @app.get("/units/{station_id}")
 def get_units(station_id: int):
