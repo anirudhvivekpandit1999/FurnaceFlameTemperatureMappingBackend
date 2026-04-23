@@ -733,7 +733,7 @@ def download_template(location: str = Query(...), unit: int = Query(...)):
     # Save existing styles from A2 and B2 before writing
     # (openpyxl preserves style when you only set .value)
     ws["A2"].value = location
-    ws["B2"].value = unit
+    ws["B2"].value = f"Unit-{unit}"
 
     # Stream the file back without saving to disk
     buffer = io.BytesIO()
