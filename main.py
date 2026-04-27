@@ -811,6 +811,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+
 @app.post("/login")
 def login(data: LoginRequest):
     try:
@@ -820,14 +821,21 @@ def login(data: LoginRequest):
         cur.callproc("sp_login", (data.username, data.password))
 
         rows = cur.fetchall()
-
+        
+        # Get column names from cursor description
+        columns = [desc[0] for desc in cur.description] if cur.description else []
+        
         conn.close()
 
         if len(rows) > 0:
+            # Convert row to dictionary using column names
+            row_dict = dict(zip(columns, rows[0]))
+            location = row_dict.get("location")
+            
             return {
                 "message": "Login successful",
                 "username": data.username,
-                "location":rows[0].get("location"),
+                "location": location
             }
         else:
             return {
@@ -837,4 +845,5 @@ def login(data: LoginRequest):
             }
 
     except Exception as e:
+        print(f"Error: {str(e)}")
         return {"error": str(e)}
