@@ -826,12 +826,14 @@ def login(data: LoginRequest):
         if len(rows) > 0:
             return {
                 "message": "Login successful",
-                "username": data.username
+                "username": data.username,
+                "location":rows[0].get("location"),
             }
         else:
             return {
                 "message": "Login failed",
-                "username": data.username
+                "username": data.username,
+                "location": None
             }
 
     except Exception as e:
