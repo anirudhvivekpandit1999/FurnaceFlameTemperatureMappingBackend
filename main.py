@@ -818,17 +818,18 @@ def login(data: LoginRequest):
         conn = get_db()
         cur = conn.cursor()
 
-        cur.callproc("sp_login", (data.username, data.password))
+        # Direct query for testing
+        cur.execute("SELECT * FROM user_master WHERE username = %s AND password = %s", 
+                   (data.username, data.password))
 
         rows = cur.fetchall()
         
-        # Get column names from cursor description
+        # Get column names
         columns = [desc[0] for desc in cur.description] if cur.description else []
         
         conn.close()
 
         if len(rows) > 0:
-            # Convert row to dictionary using column names
             row_dict = dict(zip(columns, rows[0]))
             location = row_dict.get("location")
             
