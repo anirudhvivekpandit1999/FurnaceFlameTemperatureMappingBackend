@@ -336,23 +336,31 @@ def extract_profile_points(df):
     corner_cols = []  # List of (column_name, column_index)
     avg_col = None
     
+    print(f"DEBUG: Header row columns: {list(header_row)}")  # Debug log
+    
     for col_pos in range(elev_col + 1, len(header_row)):
         cell_val = clean(header_row.iloc[col_pos])
         if cell_val is None:
             continue
         
+        cell_str = str(cell_val).strip().upper()
+        print(f"DEBUG: Column {col_pos}: '{cell_str}'")  # Debug log
+        
         # Match corner columns: C1, C2, C3, C4, C5, C6, C7, C8, etc.
-        corner_match = re.search(r'^c(\d+)$', str(cell_val).strip(), re.IGNORECASE)
+        corner_match = re.search(r'^C(\d+)$', cell_str)
         if corner_match:
             corner_num = corner_match.group(1)
             corner_cols.append((f'c{corner_num}', col_pos))
+            print(f"DEBUG: Found corner column: c{corner_num} at position {col_pos}")
         
         # Match average column
-        if re.search(r'avg|average', str(cell_val).strip(), re.IGNORECASE):
+        if re.search(r'AVG|AVERAGE', cell_str):
             avg_col = col_pos
+            print(f"DEBUG: Found average column at position {col_pos}")
     
     # If no corner columns detected, fall back to default c1-c4 positions
     if not corner_cols:
+        print("DEBUG: No corner columns found, using default c1-c4")
         corner_cols = [
             ('c1', elev_col + 1),
             ('c2', elev_col + 2),
@@ -361,6 +369,9 @@ def extract_profile_points(df):
         ]
         if avg_col is None:
             avg_col = elev_col + 5
+    
+    print(f"DEBUG: Final corner columns: {corner_cols}")
+    print(f"DEBUG: Average column: {avg_col}")
     
     # Find where the boiler section starts so we know when to stop
     boiler_row = find_row(df, 'BOILER & MILL PARAMETERS')
@@ -374,7 +385,7 @@ def extract_profile_points(df):
         # Stop on NOTE row or blank elevation
         if elev_val is None:
             continue
-        if re.search(r'\bNOTE\b', elev_val, re.IGNORECASE):
+        if re.search(r'\bNOTE\b', str(elev_val), re.IGNORECASE):
             break
         
         # Try to parse as a number
@@ -395,16 +406,33 @@ def extract_profile_points(df):
         
         # Add all corner columns
         for col_name, col_idx in corner_cols:
-            point[col_name] = clean(row.iloc[col_idx]) if col_idx < len(row) else None
+            if col_idx < len(row):
+                point[col_name] = clean(row.iloc[col_idx])
+            else:
+                point[col_name] = None
         
         # Add average
         if avg_col is not None and avg_col < len(row):
             point['avg'] = clean(row.iloc[avg_col])
         else:
-            point['avg'] = None
+            # Calculate average from available corners if avg column not found
+            corner_values = []
+            for col_name, col_idx in corner_cols:
+                val = point.get(col_name)
+                if val is not None:
+                    try:
+                        corner_values.append(float(val))
+                    except (ValueError, TypeError):
+                        pass
+            if corner_values:
+                point['avg'] = str(sum(corner_values) / len(corner_values))
+            else:
+                point['avg'] = None
         
         points.append(point)
+        print(f"DEBUG: Point added: {point}")  # Debug log
     
+    print(f"DEBUG: Total points extracted: {len(points)}")
     return points
 
 
@@ -729,34 +757,31 @@ def get_run(run_id: int):
     if not rows:
         return {
             "elevation": [],
-            "corner1": [],
-            "corner2": [],
-            "corner3": [],
-            "corner4": [],
             "average": [],
         }
     
-    # Dynamically build response based on available columns
+    # Dynamically build response based on actual database columns
     result = {
         "elevation": [r["elevation"] for r in rows],
         "average": [r.get("avg_val", r.get("avg")) for r in rows],
     }
     
-    # Extract all corner columns dynamically
+    # Extract all corner columns dynamically from the first row
     corner_cols = {}
     for key in rows[0].keys():
-        corner_match = re.match(r'^(c\d+)$', key) if isinstance(key, str) else None
+        # Match c1, c2, c3, c4, c5, c6, c7, c8, etc.
+        corner_match = re.match(r'^(c\d+)$', key)
         if corner_match:
             corner_cols[corner_match.group(1)] = []
     
-    # If we found corner columns, populate them
+    # Populate corner columns
     if corner_cols:
         for r in rows:
             for col_name in corner_cols:
                 corner_cols[col_name].append(r.get(col_name))
         result.update(corner_cols)
     else:
-        # Fallback to c1-c4
+        # Fallback to c1-c4 if no dynamic columns found
         result["corner1"] = [r.get("c1") for r in rows]
         result["corner2"] = [r.get("c2") for r in rows]
         result["corner3"] = [r.get("c3") for r in rows]
