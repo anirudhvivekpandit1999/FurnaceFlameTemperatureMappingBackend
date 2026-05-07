@@ -836,7 +836,7 @@ def login(data: LoginRequest):
             return {
                 "message": "Login successful",
                 "username": data.username,
-                "location": location
+                "location": location,
                 "role": row_dict.get("role")
             }
         else:
