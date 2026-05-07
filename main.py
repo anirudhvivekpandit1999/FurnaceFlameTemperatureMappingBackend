@@ -837,12 +837,14 @@ def login(data: LoginRequest):
                 "message": "Login successful",
                 "username": data.username,
                 "location": location
+                "role": row_dict.get("role")
             }
         else:
             return {
                 "message": "Login failed",
                 "username": data.username,
-                "location": None
+                "location": None,
+                "role": None
             }
 
     except Exception as e:
