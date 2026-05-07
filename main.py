@@ -316,50 +316,95 @@ def extract_profile_points(df):
     """
     Find the ELEVATION header row, then collect rows until we hit the
     Boiler & Mill Parameters section (or a row with no elevation value).
- 
-    Returns list of dicts: {elevation, c1, c2, c3, c4, avg_val}
+    
+    Dynamically detects all corner columns (c1, c2, c3, c4, c5, c6...)
+    Returns list of dicts: {elevation, c1, c2, c3, c4, ...cN, avg_val}
     """
     elev_row = find_row(df, 'ELEVATION')
     if elev_row is None:
         return []
- 
-    # Columns: ELEVATION=0, C1=1, C2=2, C3=3, C4=4, AVG=5
-    # (confirmed from screenshot header row)
+    
+    # Get the header row to detect all column positions
     header_row = df.iloc[elev_row]
+    
+    # Find ELEVATION column position
     elev_col = find_col_in_row(df, elev_row, 'ELEVATION')
     if elev_col is None:
         elev_col = 0
- 
+    
+    # Dynamically detect all corner columns (c1, c2, c3, c4, c5, c6, c7, c8)
+    corner_cols = []  # List of (column_name, column_index)
+    avg_col = None
+    
+    for col_pos in range(elev_col + 1, len(header_row)):
+        cell_val = clean(header_row.iloc[col_pos])
+        if cell_val is None:
+            continue
+        
+        # Match corner columns: C1, C2, C3, C4, C5, C6, C7, C8, etc.
+        corner_match = re.search(r'^c(\d+)$', str(cell_val).strip(), re.IGNORECASE)
+        if corner_match:
+            corner_num = corner_match.group(1)
+            corner_cols.append((f'c{corner_num}', col_pos))
+        
+        # Match average column
+        if re.search(r'avg|average', str(cell_val).strip(), re.IGNORECASE):
+            avg_col = col_pos
+    
+    # If no corner columns detected, fall back to default c1-c4 positions
+    if not corner_cols:
+        corner_cols = [
+            ('c1', elev_col + 1),
+            ('c2', elev_col + 2),
+            ('c3', elev_col + 3),
+            ('c4', elev_col + 4),
+        ]
+        if avg_col is None:
+            avg_col = elev_col + 5
+    
     # Find where the boiler section starts so we know when to stop
     boiler_row = find_row(df, 'BOILER & MILL PARAMETERS')
-    end_row    = boiler_row if boiler_row is not None else len(df)
- 
+    end_row = boiler_row if boiler_row is not None else len(df)
+    
     points = []
     for i in range(elev_row + 1, end_row):
         row = df.iloc[i]
         elev_val = clean(row.iloc[elev_col])
- 
+        
         # Stop on NOTE row or blank elevation
         if elev_val is None:
             continue
         if re.search(r'\bNOTE\b', elev_val, re.IGNORECASE):
             break
- 
+        
         # Try to parse as a number
         try:
-            float(elev_val.split()[0])   # e.g. "58.4" or "GH/ 35.0"
+            # Extract numeric part from elevation (e.g., "58.4" from "GH/ 35.0")
+            elev_num = re.search(r'[\d.]+', str(elev_val))
+            if elev_num:
+                float(elev_num.group())
+            else:
+                continue
         except ValueError:
-            continue   # skip label-only rows like "GH / 35.0 M"
- 
-        points.append({
+            continue  # skip label-only rows like "GH / 35.0 M"
+        
+        # Build point dictionary with all corner columns
+        point = {
             'elevation': elev_val,
-            'c1':        clean(row.iloc[elev_col + 1]) if elev_col + 1 < len(row) else None,
-            'c2':        clean(row.iloc[elev_col + 2]) if elev_col + 2 < len(row) else None,
-            'c3':        clean(row.iloc[elev_col + 3]) if elev_col + 3 < len(row) else None,
-            'c4':        clean(row.iloc[elev_col + 4]) if elev_col + 4 < len(row) else None,
-            'avg':       clean(row.iloc[elev_col + 5]) if elev_col + 5 < len(row) else None,
-        })
- 
+        }
+        
+        # Add all corner columns
+        for col_name, col_idx in corner_cols:
+            point[col_name] = clean(row.iloc[col_idx]) if col_idx < len(row) else None
+        
+        # Add average
+        if avg_col is not None and avg_col < len(row):
+            point['avg'] = clean(row.iloc[avg_col])
+        else:
+            point['avg'] = None
+        
+        points.append(point)
+    
     return points
 
 
@@ -542,10 +587,21 @@ def _dec_coal(row):
 
 
 def _dec_profile(row):
+    """Decrypt all numerical fields in a profile row"""
+    if not row:
+        return row
     out = dict(row)
-    for f in ["elevation", "c1", "c2", "c3", "c4", "avg_val"]:
-        if f in out:
+    # Decrypt elevation and avg_val
+    for f in ["elevation", "avg_val", "avg"]:
+        if f in out and out[f] is not None:
             out[f] = decrypt_at_rest_float(out[f])
+    
+    # Decrypt all corner columns (c1, c2, c3, c4, c5, c6, c7, c8...)
+    for key in list(out.keys()):
+        if re.match(r'^c\d+$', key):  # Match c1, c2, c3, c4, c5, etc.
+            if out[key] is not None:
+                out[key] = decrypt_at_rest_float(out[key])
+    
     return out
 
 
@@ -669,14 +725,44 @@ def get_run(run_id: int):
         rows = result_set.fetchall()
     cur.close()
     conn.close()
-    return {
+    
+    if not rows:
+        return {
+            "elevation": [],
+            "corner1": [],
+            "corner2": [],
+            "corner3": [],
+            "corner4": [],
+            "average": [],
+        }
+    
+    # Dynamically build response based on available columns
+    result = {
         "elevation": [r["elevation"] for r in rows],
-        "corner1":   [r["c1"]        for r in rows],
-        "corner2":   [r["c2"]        for r in rows],
-        "corner3":   [r["c3"]        for r in rows],
-        "corner4":   [r["c4"]        for r in rows],
-        "average":   [r["avg_val"]   for r in rows],
+        "average": [r.get("avg_val", r.get("avg")) for r in rows],
     }
+    
+    # Extract all corner columns dynamically
+    corner_cols = {}
+    for key in rows[0].keys():
+        corner_match = re.match(r'^(c\d+)$', key) if isinstance(key, str) else None
+        if corner_match:
+            corner_cols[corner_match.group(1)] = []
+    
+    # If we found corner columns, populate them
+    if corner_cols:
+        for r in rows:
+            for col_name in corner_cols:
+                corner_cols[col_name].append(r.get(col_name))
+        result.update(corner_cols)
+    else:
+        # Fallback to c1-c4
+        result["corner1"] = [r.get("c1") for r in rows]
+        result["corner2"] = [r.get("c2") for r in rows]
+        result["corner3"] = [r.get("c3") for r in rows]
+        result["corner4"] = [r.get("c4") for r in rows]
+    
+    return result
 
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
