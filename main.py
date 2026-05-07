@@ -317,7 +317,7 @@ def extract_profile_points(df):
     Find the ELEVATION header row, then collect rows until we hit the
     Boiler & Mill Parameters section (or a row with no elevation value).
     
-    Dynamically detects all corner columns (c1, c2, c3, c4, c5, c6...)
+    Dynamically detects all corner columns (Corner 1, Corner 2, etc.)
     Returns list of dicts: {elevation, c1, c2, c3, c4, ...cN, avg_val}
     """
     elev_row = find_row(df, 'ELEVATION')
@@ -332,11 +332,11 @@ def extract_profile_points(df):
     if elev_col is None:
         elev_col = 0
     
-    # Dynamically detect all corner columns (c1, c2, c3, c4, c5, c6, c7, c8)
+    # Dynamically detect all corner columns
     corner_cols = []  # List of (column_name, column_index)
     avg_col = None
     
-    print(f"DEBUG: Header row columns: {list(header_row)}")  # Debug log
+    print(f"DEBUG: Header row columns: {list(header_row)}")
     
     for col_pos in range(elev_col + 1, len(header_row)):
         cell_val = clean(header_row.iloc[col_pos])
@@ -344,14 +344,23 @@ def extract_profile_points(df):
             continue
         
         cell_str = str(cell_val).strip().upper()
-        print(f"DEBUG: Column {col_pos}: '{cell_str}'")  # Debug log
+        print(f"DEBUG: Column {col_pos}: '{cell_str}'")
         
-        # Match corner columns: C1, C2, C3, C4, C5, C6, C7, C8, etc.
+        # Match corner columns: CORNER 1, CORNER 2, CORNER 3, CORNER 4, CORNER 5, etc.
+        corner_match = re.search(r'CORNER\s*(\d+)', cell_str)
+        if corner_match:
+            corner_num = corner_match.group(1)
+            corner_cols.append((f'c{corner_num}', col_pos))
+            print(f"DEBUG: Found corner column: c{corner_num} at position {col_pos}")
+            continue
+        
+        # Also match just C1, C2, C3, C4, C5 format
         corner_match = re.search(r'^C(\d+)$', cell_str)
         if corner_match:
             corner_num = corner_match.group(1)
             corner_cols.append((f'c{corner_num}', col_pos))
             print(f"DEBUG: Found corner column: c{corner_num} at position {col_pos}")
+            continue
         
         # Match average column
         if re.search(r'AVG|AVERAGE', cell_str):
@@ -430,7 +439,7 @@ def extract_profile_points(df):
                 point['avg'] = None
         
         points.append(point)
-        print(f"DEBUG: Point added: {point}")  # Debug log
+        print(f"DEBUG: Point added: {point}")
     
     print(f"DEBUG: Total points extracted: {len(points)}")
     return points
