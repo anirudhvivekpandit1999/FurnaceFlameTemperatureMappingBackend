@@ -1056,6 +1056,28 @@ class UploadRunPayload(BaseModel):
     coal_mill_params: Optional[List[CoalMillParam]] = None
 
 
+def _fetch_stations(conn) -> List[Dict[str, Any]]:
+    """
+    Robustly fetch stations from `sp_get_stations()`.
+    This repo's existing `/stations` endpoint uses `callproc` + `fetchall()`,
+    so we mirror that behavior and map tuples to dicts via cursor.description.
+    """
+    cur = conn.cursor()
+    cur.callproc("sp_get_stations")
+    rows = cur.fetchall() or []
+    cols = [d[0] for d in (cur.description or [])]
+    cur.close()
+    if not cols:
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        try:
+            out.append(dict(zip(cols, r)))
+        except Exception:
+            continue
+    return out
+
+
 def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
     """
     Accept station id as int / numeric string, or station name.
@@ -1076,12 +1098,7 @@ def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
 
     # Name path: fetch stations and match by common fields (supports abbreviations)
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.callproc("sp_get_stations")
-        rows = []
-        for rs in cur.stored_results():
-            rows = rs.fetchall() or []
-        cur.close()
+        rows = _fetch_stations(conn)
         s_l = re.sub(r"\s+", " ", s).lower()
 
         def _cand_station_id(r: dict) -> Optional[int]:
@@ -1142,12 +1159,7 @@ def _resolve_station_location(conn, station_value: Any) -> str:
 
     # Numeric id: try lookup to a name/location field
     try:
-        cur = conn.cursor(dictionary=True)
-        cur.callproc("sp_get_stations")
-        rows = []
-        for rs in cur.stored_results():
-            rows = rs.fetchall() or []
-        cur.close()
+        rows = _fetch_stations(conn)
         station_id_int = int(s)
         for r in rows:
             cand = r.get("station_id") or r.get("id") or r.get("stationId")
@@ -1209,12 +1221,7 @@ def upload_run_json(payload: UploadRunPayload):
             # Provide options for debugging UI → DB station mapping
             options = []
             try:
-                dbg = conn.cursor(dictionary=True)
-                dbg.callproc("sp_get_stations")
-                rows = []
-                for rs in dbg.stored_results():
-                    rows = rs.fetchall() or []
-                dbg.close()
+                rows = _fetch_stations(conn)
                 for r in rows[:50]:
                     sid = r.get("station_id") or r.get("id") or r.get("stationId")
                     name = r.get("name") or r.get("station_name") or r.get("station") or r.get("location")
