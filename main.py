@@ -772,29 +772,14 @@ def get_run(run_id: int):
     # Dynamically build response based on actual database columns
     result = {
         "elevation": [r["elevation"] for r in rows],
-        "average": [r.get("avg_val", r.get("avg")) for r in rows],
+        "average": [r.get("avg_val") for r in rows],
     }
     
-    # Extract all corner columns dynamically from the first row
-    corner_cols = {}
+    # Extract all corner columns dynamically
     for key in rows[0].keys():
-        # Match c1, c2, c3, c4, c5, c6, c7, c8, etc.
-        corner_match = re.match(r'^(c\d+)$', key)
-        if corner_match:
-            corner_cols[corner_match.group(1)] = []
-    
-    # Populate corner columns
-    if corner_cols:
-        for r in rows:
-            for col_name in corner_cols:
-                corner_cols[col_name].append(r.get(col_name))
-        result.update(corner_cols)
-    else:
-        # Fallback to c1-c4 if no dynamic columns found
-        result["corner1"] = [r.get("c1") for r in rows]
-        result["corner2"] = [r.get("c2") for r in rows]
-        result["corner3"] = [r.get("c3") for r in rows]
-        result["corner4"] = [r.get("c4") for r in rows]
+        # Match c1, c2, c3, c4, c5, c6, c7, c8
+        if re.match(r'^c\d+$', key):
+            result[key] = [r.get(key) for r in rows]
     
     return result
 
