@@ -1101,6 +1101,43 @@ def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
     return None
 
 
+def _resolve_station_location(conn, station_value: Any) -> str:
+    """
+    Best-effort location string for `runs.location`.
+    - If UI sent a non-numeric station name, use it.
+    - If UI sent an id, attempt to look up the station name via sp_get_stations.
+    """
+    if station_value is None:
+        return ""
+    s = str(station_value).strip()
+    if not s:
+        return ""
+    if not re.fullmatch(r"\d+", s):
+        return s
+
+    # Numeric id: try lookup to a name/location field
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.callproc("sp_get_stations")
+        rows = []
+        for rs in cur.stored_results():
+            rows = rs.fetchall() or []
+        cur.close()
+        station_id_int = int(s)
+        for r in rows:
+            cand = r.get("station_id") or r.get("id") or r.get("stationId")
+            try:
+                cand_int = int(cand)
+            except Exception:
+                continue
+            if cand_int == station_id_int:
+                return (r.get("location") or r.get("name") or r.get("station_name") or r.get("station") or "").strip()
+    except Exception:
+        return ""
+
+    return ""
+
+
 @app.post("/upload-run")
 def upload_run_json(payload: UploadRunPayload):
     """
@@ -1152,6 +1189,8 @@ def upload_run_json(payload: UploadRunPayload):
                 "station_id_received": payload.station_id,
             }
 
+        location_text = _resolve_station_location(conn, payload.station_id)
+
         # Create run
         cur.callproc(
             "sp_create_run",
@@ -1163,8 +1202,8 @@ def upload_run_json(payload: UploadRunPayload):
                 run_date_obj,
                 payload.uploaded_by or "system",
                 payload.notes or "",
-                str(payload.station_id or ""),  # store station name/location if UI sent it
-                f"Unit-{unit_id_int}",
+                location_text,
+                unit_id_int,  # `runs.unit` is INT in your SP
             ),
         )
 
@@ -1183,7 +1222,7 @@ def upload_run_json(payload: UploadRunPayload):
         # Persist profile points
         cur.callproc(
             "sp_add_run_points_bulk",
-            (run_id, str(payload.station_id or ""), unit_id_int, json.dumps(points)),
+            (run_id, location_text, unit_id_int, json.dumps(points)),
         )
 
         # Persist boiler + flue gas params (same table in this backend)
