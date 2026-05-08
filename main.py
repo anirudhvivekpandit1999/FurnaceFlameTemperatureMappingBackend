@@ -22,6 +22,9 @@ import os
 from datetime import datetime
 import re
 from pydantic import BaseModel
+from typing import Optional, Any
+
+from dateutil import parser as date_parser
 
 from crypto import (
     encrypt_at_rest,
@@ -73,34 +76,61 @@ def clean(val):
     s = str(val).strip()
     return s if s else None
 
+def parse_date_flexible(value: Any) -> Optional[datetime.date]:
+    """
+    Parse a date from many possible inputs (Excel cells, strings, etc.)
+    and normalize to a `date` object.
+    """
+    if value is None:
+        return None
+
+    # Common Excel / pandas cases
+    if isinstance(value, datetime):
+        return value.date()
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        # includes `datetime.date` and some pandas date-like values
+        try:
+            return datetime(int(value.year), int(value.month), int(value.day)).date()
+        except Exception:
+            pass
+
+    s = clean(value)
+    if not s:
+        return None
+
+    # Strip obvious noise and normalize separators a bit
+    s = re.sub(r"\s+", " ", s)
+
+    try:
+        # dayfirst=True keeps existing DD/MM/YYYY behavior for ambiguous cases,
+        # but still allows many formats (e.g. "May 8 2026", "2026-05-08", etc.)
+        dt = date_parser.parse(s, dayfirst=True, fuzzy=True)
+        return dt.date()
+    except Exception:
+        return None
+
 def extract_date_from_sheet(df):
     """
     Look for a cell matching 'Date :- DD/MM/YYYY' in the first 5 rows.
     Returns a date object or None.
     """
-    date_re = re.compile(r'date\s*[:\-]+\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})', re.IGNORECASE)
+    # Accept "Date :- <anything>" and let the flexible parser do the work.
+    date_re = re.compile(r"date\s*[:\-]+\s*(.+)$", re.IGNORECASE)
     for i in range(min(5, len(df))):
         for val in df.iloc[i]:
             if val is None:
                 continue
             m = date_re.search(str(val))
             if m:
-                raw = m.group(1).replace('-', '/')
-                for fmt in ('%d/%m/%Y', '%d/%m/%y', '%m/%d/%Y'):
-                    try:
-                        return datetime.strptime(raw, fmt).date()
-                    except ValueError:
-                        pass
+                parsed = parse_date_flexible(m.group(1))
+                if parsed:
+                    return parsed
     # Fallback: look for a bare datetime / date object in first 5 rows
     for i in range(min(5, len(df))):
         for val in df.iloc[i]:
-            if isinstance(val, datetime):
-                return val.date()
-            if isinstance(val, __builtins__.__class__) or hasattr(val, 'year'):
-                try:
-                    return val
-                except Exception:
-                    pass
+            parsed = parse_date_flexible(val)
+            if parsed:
+                return parsed
     return None
 
 
@@ -149,13 +179,9 @@ def extract_metadata(df):
                     # Value is in the very next cell to the right
                     next_val = clean(row_vals[col_pos + 1]) if col_pos + 1 < len(row_vals) else None
                     if next_val:
-                        raw = next_val.replace('-', '/')
-                        for fmt in ('%d/%m/%Y', '%d/%m/%y', '%m/%d/%Y'):
-                            try:
-                                meta['run_date'] = datetime.strptime(raw, fmt).date()
-                                break
-                            except ValueError:
-                                pass
+                        parsed = parse_date_flexible(next_val)
+                        if parsed:
+                            meta['run_date'] = parsed
                     break  # stop scanning columns once label found
 
         # ── Time: same pattern ────────────────────────────────────────────
