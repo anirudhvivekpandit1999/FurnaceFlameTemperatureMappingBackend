@@ -245,28 +245,33 @@ _COAL_ROW_LABELS = {
 
 def extract_coal_mill_params(df):
     """
-    Find Coal Mill Parameters section. Detect mill names from the COAL MILLS
-    header row, then for each parameter row scan by label.
- 
-    Returns list of dicts: {mill, coal_flow_tph, pa_flow_tph, ...}
+    Find Coal Mill Parameters section.
     """
     coal_row = find_row(df, 'COAL MILL PARAMETERS')
+    print(f"DEBUG: coal_row found at index: {coal_row}")
+    
     if coal_row is None:
+        print("DEBUG: No COAL MILL PARAMETERS section found")
         return []
  
     end_row = find_row(df, r'end')
     if end_row is None:
         end_row = len(df)
- 
+    
+    print(f"DEBUG: end_row set to: {end_row}")
+    
     # The COAL MILLS row has mill names: "Coal Mill - A", "Coal Mill - B", ...
     mills_header_row = None
     for i in range(coal_row, min(coal_row + 3, len(df))):
         row_str = ' '.join(str(v) for v in df.iloc[i] if v is not None).lower()
+        print(f"DEBUG: Checking row {i}: '{row_str}'")
         if 'coal mill' in row_str or 'coal mills' in row_str:
             mills_header_row = i
+            print(f"DEBUG: Found mills header at row {i}")
             break
  
     if mills_header_row is None:
+        print("DEBUG: No mills header row found")
         return []
  
     # Collect (mill_letter, col_index) pairs from that header row
@@ -275,12 +280,17 @@ def extract_coal_mill_params(df):
         if val is None:
             continue
         vs = str(val).strip()
+        print(f"DEBUG: Checking column {col_pos}: '{vs}'")
         # Match "Coal Mill - A" or "Coal Mill A" or just "A"
         m = re.search(r'coal\s*mill[\s\-]*([A-Ha-h])\b', vs, re.IGNORECASE)
         if m:
             mills.append((m.group(1).upper(), col_pos))
- 
+            print(f"DEBUG: Found mill {m.group(1).upper()} at column {col_pos}")
+    
+    print(f"DEBUG: Total mills found: {len(mills)}")
+    
     if not mills:
+        print("DEBUG: No mills found in header row")
         return []
  
     # Find the label column (leftmost non-mill column in that row)
@@ -293,9 +303,11 @@ def extract_coal_mill_params(df):
         if not cell:
             continue
         cell_l = cell.lower()
+        print(f"DEBUG: Checking row {i} for labels: '{cell_l}'")
         for key, frag in _COAL_ROW_LABELS.items():
             if frag in cell_l and key not in label_row_map:
                 label_row_map[key] = i
+                print(f"DEBUG: Found {key} at row {i}")
  
     # Build result – one dict per mill
     result = []
@@ -303,14 +315,16 @@ def extract_coal_mill_params(df):
         entry = {'mill': mill_letter}
         for key in _COAL_ROW_LABELS:
             row_i = label_row_map.get(key)
-            entry[key] = clean(df.iloc[row_i, col_pos]) if row_i is not None and col_pos < df.shape[1] else None
+            if row_i is not None and col_pos < df.shape[1]:
+                entry[key] = clean(df.iloc[row_i, col_pos])
+            else:
+                entry[key] = None
         # Only include if at least one value is non-null
         if any(v for k, v in entry.items() if k != 'mill'):
             result.append(entry)
- 
+    
+    print(f"DEBUG: Final result has {len(result)} mills")
     return result
-
-
 
 def extract_profile_points(df):
     """
