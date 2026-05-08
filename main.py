@@ -834,12 +834,48 @@ def get_history(
 ):
     conn = get_db()
     cur = conn.cursor(dictionary=True)
-    sd = parse_date_flexible(start_date).isoformat() if start_date else "2000-01-01"
-    ed = parse_date_flexible(end_date).isoformat() if end_date else "2100-01-01"
-    cur.callproc("sp_get_runs", (station_id, unit_id, sd, ed))
+    sd_obj = parse_date_flexible(start_date) if start_date else None
+    ed_obj = parse_date_flexible(end_date) if end_date else None
+    sd = sd_obj.isoformat() if sd_obj else "2000-01-01"
+    ed = ed_obj.isoformat() if ed_obj else "2100-01-01"
+
+    s = (station_id or "").strip()
     rows = []
-    for result_set in cur.stored_results():
-        rows = result_set.fetchall()
+
+    # If station_id is numeric, use the stored procedure.
+    # If it's a location string like "BSL", query by `runs.location` directly.
+    if re.fullmatch(r"\d+", s):
+        cur.callproc("sp_get_runs", (int(s), unit_id, sd, ed))
+        for result_set in cur.stored_results():
+            rows = result_set.fetchall()
+    else:
+        cur.execute(
+            """
+            SELECT *
+            FROM runs
+            WHERE unit_id = %s
+              AND location = %s
+              AND run_date BETWEEN %s AND %s
+            ORDER BY run_date DESC, run_timestamp DESC
+            """,
+            (unit_id, s, sd, ed),
+        )
+        rows = cur.fetchall()
+
+        # If exact location match yields nothing, fall back to LIKE.
+        if not rows:
+            cur.execute(
+                """
+                SELECT *
+                FROM runs
+                WHERE unit_id = %s
+                  AND location LIKE %s
+                  AND run_date BETWEEN %s AND %s
+                ORDER BY run_date DESC, run_timestamp DESC
+                """,
+                (unit_id, f"%{s}%", sd, ed),
+            )
+            rows = cur.fetchall()
     cur.close()
     conn.close()
     return rows
