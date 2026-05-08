@@ -114,23 +114,52 @@ def extract_date_from_sheet(df):
     Look for a cell matching 'Date :- DD/MM/YYYY' in the first 5 rows.
     Returns a date object or None.
     """
-    # Accept "Date :- <anything>" and let the flexible parser do the work.
-    date_re = re.compile(r"date\s*[:\-]+\s*(.+)$", re.IGNORECASE)
+    def _looks_like_date_text(s: str) -> bool:
+        s = s.strip()
+        if not s:
+            return False
+        # 4-digit year, or dd/mm/yy-style with separators, or month names
+        if re.search(r"\b(19|20)\d{2}\b", s):
+            return True
+        if re.search(r"\b\d{1,2}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}\b", s):
+            return True
+        if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b", s, re.IGNORECASE):
+            return True
+        return False
+
+    # First pass: find a "Date" label and parse from the same cell or the cell to the right
+    for i in range(min(5, len(df))):
+        row_vals = list(df.iloc[i])
+        for j, val in enumerate(row_vals):
+            if val is None:
+                continue
+            text = str(val)
+            if re.search(r"\bdate\b", text, re.IGNORECASE):
+                # Sometimes date is embedded in the same cell: "Date :- 14.05.2026"
+                parsed = parse_date_flexible(text)
+                if parsed:
+                    return parsed
+                # Common template pattern: "Date :-" | "14.05.2026"
+                if j + 1 < len(row_vals):
+                    parsed_next = parse_date_flexible(row_vals[j + 1])
+                    if parsed_next:
+                        return parsed_next
+
+    # Second pass: any obvious-looking date in the first 5 rows
     for i in range(min(5, len(df))):
         for val in df.iloc[i]:
             if val is None:
                 continue
-            m = date_re.search(str(val))
-            if m:
-                parsed = parse_date_flexible(m.group(1))
-                if parsed:
-                    return parsed
-    # Fallback: look for a bare datetime / date object in first 5 rows
-    for i in range(min(5, len(df))):
-        for val in df.iloc[i]:
             parsed = parse_date_flexible(val)
             if parsed:
-                return parsed
+                # Guard against accidentally parsing non-date numeric fields:
+                # only accept stringy values that resemble a date.
+                if isinstance(val, str):
+                    if _looks_like_date_text(val):
+                        return parsed
+                else:
+                    return parsed
+
     return None
 
 
