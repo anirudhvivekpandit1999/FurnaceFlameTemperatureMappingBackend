@@ -21,8 +21,8 @@ import shutil
 import os
 from datetime import datetime
 import re
-from pydantic import BaseModel
-from typing import Optional, Any
+from pydantic import BaseModel, Field
+from typing import Optional, Any, Dict, List
 
 from dateutil import parser as date_parser
 
@@ -826,10 +826,17 @@ async def upload_file(
         return {'error': str(exc), 'trace': traceback.format_exc()}
 # ─── HISTORY ──────────────────────────────────────────────────
 @app.get("/history")
-def get_history(station_id: str, unit_id: int):
+def get_history(
+    station_id: str,
+    unit_id: int,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+):
     conn = get_db()
     cur = conn.cursor(dictionary=True)
-    cur.callproc("sp_get_runs", (station_id, unit_id, "2000-01-01", "2100-01-01"))
+    sd = parse_date_flexible(start_date).isoformat() if start_date else "2000-01-01"
+    ed = parse_date_flexible(end_date).isoformat() if end_date else "2100-01-01"
+    cur.callproc("sp_get_runs", (station_id, unit_id, sd, ed))
     rows = []
     for result_set in cur.stored_results():
         rows = result_set.fetchall()
@@ -1001,6 +1008,144 @@ def get_upload_log():
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ElevationProfileRow(BaseModel):
+    elevation_m: float = Field(..., description="Elevation in meters")
+    values: Dict[str, Optional[float]] = Field(default_factory=dict, description="Corner label -> temperature")
+    average: Optional[float] = None
+
+
+class ElevationProfile(BaseModel):
+    columns: List[str]
+    rows: List[ElevationProfileRow]
+
+
+class RunMeta(BaseModel):
+    run_date: str
+    run_time: Optional[str] = None
+    load_mw: Optional[float] = None
+    total_coal_flow_tph: Optional[float] = None
+    total_air_flow_tph: Optional[float] = None
+    burner_tilt_deg: Optional[float] = None
+    coal_mills_in_service_count: Optional[float] = None
+    coal_mills_in_service: Optional[str] = None
+    oil_guns_in_service_count: Optional[float] = None
+    oil_guns_in_service: Optional[str] = None
+
+
+class CoalMillParam(BaseModel):
+    mill: str
+    coal_flow_tph: Optional[float] = None
+    pa_flow_tph: Optional[float] = None
+    mill_dp_mmwc: Optional[float] = None
+    mill_outlet_temp: Optional[float] = None
+    mill_current_amp: Optional[float] = None
+
+
+class UploadRunPayload(BaseModel):
+    station_id: str
+    unit_id: int
+    uploaded_by: Optional[str] = "system"
+    notes: Optional[str] = ""
+    run_meta: RunMeta
+    elevation_profile: ElevationProfile
+    boiler_params: Optional[Dict[str, Optional[float]]] = None
+    flue_gas_temps: Optional[Dict[str, Optional[float]]] = None
+    coal_mill_params: Optional[List[CoalMillParam]] = None
+
+
+@app.post("/upload-run")
+def upload_run_json(payload: UploadRunPayload):
+    """
+    JSON ingest endpoint used by the "Create Run" UI (no Excel file upload).
+    Normalizes run_date to YYYY-MM-DD and persists run + profile + params.
+    """
+    try:
+        run_date_obj = parse_date_flexible(payload.run_meta.run_date)
+        if not run_date_obj:
+            return {"error": "Invalid run_date"}
+
+        # Convert elevation rows to the same shape expected by sp_add_run_points_bulk.
+        # Use c1/c2/... keys derived from "Corner <n>" labels (or any label containing a number).
+        points: List[Dict[str, Any]] = []
+        for r in payload.elevation_profile.rows:
+            elev = r.elevation_m
+            point: Dict[str, Any] = {"elevation": str(elev)}
+            # values is { "Corner 1": 1000, ... }
+            for label, temp in (r.values or {}).items():
+                if temp is None:
+                    continue
+                m = re.search(r"(\d+)", str(label))
+                if m:
+                    point[f"c{m.group(1)}"] = temp
+            avg = r.average
+            if avg is None:
+                present = [v for v in point.values() if isinstance(v, (int, float))]
+                avg = (sum(present) / len(present)) if present else None
+            point["avg"] = avg
+            point["avg_val"] = avg  # be tolerant to either naming convention downstream
+            points.append(point)
+
+        conn = get_db()
+        cur = conn.cursor(dictionary=True)
+
+        # Create run
+        cur.callproc(
+            "sp_create_run",
+            (
+                payload.station_id,
+                payload.unit_id,
+                "manual_entry",
+                datetime.now(),
+                run_date_obj,
+                payload.uploaded_by or "system",
+                payload.notes or "",
+                "",  # location (BSL) not provided by manual entry
+                f"Unit-{payload.unit_id}",
+            ),
+        )
+
+        run_id = None
+        for result_set in cur.stored_results():
+            row = result_set.fetchone()
+            if row:
+                run_id = row.get("run_id")
+                break
+
+        if run_id is None:
+            cur.close()
+            conn.close()
+            return {"error": "Failed to create run"}
+
+        # Persist profile points
+        cur.callproc(
+            "sp_add_run_points_bulk",
+            (run_id, "", payload.unit_id, json.dumps(points)),
+        )
+
+        # Persist boiler + flue gas params (same table in this backend)
+        merged_params: Dict[str, Any] = {}
+        if payload.boiler_params:
+            merged_params.update(payload.boiler_params)
+        if payload.flue_gas_temps:
+            merged_params.update(payload.flue_gas_temps)
+        if merged_params:
+            upsert_boiler_mill_params(cur, run_id, merged_params)
+
+        # Persist coal mills
+        if payload.coal_mill_params:
+            upsert_coal_mill_params(cur, run_id, [m.model_dump() for m in payload.coal_mill_params])
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {"message": "Run uploaded successfully", "run_id": run_id}
+
+    except Exception as exc:
+        import traceback
+        return {"error": str(exc), "trace": traceback.format_exc()}
 
 
 @app.post("/login")
