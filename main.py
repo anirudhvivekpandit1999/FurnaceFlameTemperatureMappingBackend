@@ -1074,7 +1074,7 @@ def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
         except Exception:
             pass
 
-    # Name path: fetch stations and match by common fields
+    # Name path: fetch stations and match by common fields (supports abbreviations)
     try:
         cur = conn.cursor(dictionary=True)
         cur.callproc("sp_get_stations")
@@ -1082,18 +1082,43 @@ def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
         for rs in cur.stored_results():
             rows = rs.fetchall() or []
         cur.close()
-        s_l = s.lower()
+        s_l = re.sub(r"\s+", " ", s).lower()
+
+        def _cand_station_id(r: dict) -> Optional[int]:
+            cand = r.get("station_id") or r.get("id") or r.get("stationId")
+            if cand is None:
+                return None
+            if isinstance(cand, int):
+                return cand
+            cs = str(cand).strip()
+            if re.fullmatch(r"\d+", cs):
+                return int(cs)
+            return None
+
+        # Prefer exact matches first
         for r in rows:
-            # try common column names
-            name = (r.get("name") or r.get("station") or r.get("station_name") or r.get("location") or "").strip()
-            if name and name.lower() == s_l:
-                cand = r.get("station_id") or r.get("id") or r.get("stationId")
-                if cand is None:
-                    continue
-                if isinstance(cand, int):
-                    return cand
-                if re.fullmatch(r"\d+", str(cand).strip()):
-                    return int(str(cand).strip())
+            for k in ("name", "station", "station_name", "location"):
+                val = (r.get(k) or "")
+                name = re.sub(r"\s+", " ", str(val)).strip()
+                if name and name.lower() == s_l:
+                    sid = _cand_station_id(r)
+                    if sid is not None:
+                        return sid
+
+        # Then allow abbreviation / partial matches (e.g. "BSL" matches "BSL Unit-5")
+        for r in rows:
+            hay = []
+            for k in ("name", "station", "station_name", "location"):
+                v = (r.get(k) or "")
+                vv = re.sub(r"\s+", " ", str(v)).strip()
+                if vv:
+                    hay.append(vv.lower())
+            if not hay:
+                continue
+            if any(h.startswith(s_l) or s_l in h for h in hay):
+                sid = _cand_station_id(r)
+                if sid is not None:
+                    return sid
     except Exception:
         # If station resolution fails, caller will return a helpful error
         return None
@@ -1181,12 +1206,29 @@ def upload_run_json(payload: UploadRunPayload):
 
         station_id_int = _resolve_station_id(conn, payload.station_id)
         if station_id_int is None:
+            # Provide options for debugging UI → DB station mapping
+            options = []
+            try:
+                dbg = conn.cursor(dictionary=True)
+                dbg.callproc("sp_get_stations")
+                rows = []
+                for rs in dbg.stored_results():
+                    rows = rs.fetchall() or []
+                dbg.close()
+                for r in rows[:50]:
+                    sid = r.get("station_id") or r.get("id") or r.get("stationId")
+                    name = r.get("name") or r.get("station_name") or r.get("station") or r.get("location")
+                    if sid is not None or name is not None:
+                        options.append({"station_id": sid, "name": name})
+            except Exception:
+                options = []
             cur.close()
             conn.close()
             return {
                 "error": "Invalid station_id",
                 "detail": "Expected numeric station id or a station name matching sp_get_stations()",
                 "station_id_received": payload.station_id,
+                "station_options": options,
             }
 
         location_text = _resolve_station_location(conn, payload.station_id)
