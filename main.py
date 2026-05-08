@@ -1044,8 +1044,11 @@ class CoalMillParam(BaseModel):
 
 
 class UploadRunPayload(BaseModel):
-    # UI may send station as an id or a name; we resolve it before DB writes.
-    station_id: Any
+    # API-facing: treat station as a location/name string (e.g. "BSL").
+    # We do NOT require callers to know / provide numeric station_id.
+    station: Optional[str] = None
+    # Backward-compatible: if older clients still send station_id, we accept it.
+    station_id: Optional[Any] = None
     unit_id: Any
     uploaded_by: Optional[str] = "system"
     notes: Optional[str] = ""
@@ -1076,6 +1079,48 @@ def _fetch_stations(conn) -> List[Dict[str, Any]]:
         except Exception:
             continue
     return out
+
+
+def _resolve_station_id_from_runs(conn, location_text: str) -> Optional[int]:
+    """
+    Fallback: infer station_id by matching existing runs.location.
+    This is useful when `sp_get_stations()` is unavailable or returns no rows.
+    """
+    s = (location_text or "").strip()
+    if not s:
+        return None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT station_id
+            FROM runs
+            WHERE location = %s
+            ORDER BY run_id DESC
+            LIMIT 1
+            """,
+            (s,),
+        )
+        row = cur.fetchone()
+        if row and row.get("station_id") is not None:
+            return int(row["station_id"])
+        cur.execute(
+            """
+            SELECT station_id
+            FROM runs
+            WHERE location LIKE %s
+            ORDER BY run_id DESC
+            LIMIT 1
+            """,
+            (f"%{s}%",),
+        )
+        row = cur.fetchone()
+        cur.close()
+        if row and row.get("station_id") is not None:
+            return int(row["station_id"])
+    except Exception:
+        return None
+    return None
 
 
 def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
@@ -1138,7 +1183,11 @@ def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
                     return sid
     except Exception:
         # If station resolution fails, caller will return a helpful error
-        return None
+        return _resolve_station_id_from_runs(conn, s)
+
+    # If station master returned nothing, try inferring from existing runs
+    if not rows:
+        return _resolve_station_id_from_runs(conn, s)
 
     return None
 
@@ -1216,29 +1265,21 @@ def upload_run_json(payload: UploadRunPayload):
         conn = get_db()
         cur = conn.cursor(dictionary=True)
 
-        station_id_int = _resolve_station_id(conn, payload.station_id)
-        if station_id_int is None:
-            # Provide options for debugging UI → DB station mapping
-            options = []
-            try:
-                rows = _fetch_stations(conn)
-                for r in rows[:50]:
-                    sid = r.get("station_id") or r.get("id") or r.get("stationId")
-                    name = r.get("name") or r.get("station_name") or r.get("station") or r.get("location")
-                    if sid is not None or name is not None:
-                        options.append({"station_id": sid, "name": name})
-            except Exception:
-                options = []
-            cur.close()
-            conn.close()
-            return {
-                "error": "Invalid station_id",
-                "detail": "Expected numeric station id or a station name matching sp_get_stations()",
-                "station_id_received": payload.station_id,
-                "station_options": options,
-            }
+        # Station concept for API: location/name string.
+        location_text = (payload.station or "").strip()
+        if not location_text and payload.station_id is not None:
+            # If older clients sent station_id as a name, preserve it as location.
+            location_text = str(payload.station_id).strip()
 
-        location_text = _resolve_station_location(conn, payload.station_id)
+        # DB still requires station_id INT. We infer it if possible, otherwise default.
+        station_id_int = None
+        if payload.station_id is not None:
+            station_id_int = _resolve_station_id(conn, payload.station_id)
+        if station_id_int is None and location_text:
+            station_id_int = _resolve_station_id_from_runs(conn, location_text)
+        if station_id_int is None:
+            # Last resort: use a stable default. Location + unit + date still disambiguate runs.
+            station_id_int = 1
 
         # Create run
         cur.callproc(
