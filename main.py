@@ -1044,8 +1044,9 @@ class CoalMillParam(BaseModel):
 
 
 class UploadRunPayload(BaseModel):
-    station_id: str
-    unit_id: int
+    # UI may send station as an id or a name; we resolve it before DB writes.
+    station_id: Any
+    unit_id: Any
     uploaded_by: Optional[str] = "system"
     notes: Optional[str] = ""
     run_meta: RunMeta
@@ -1053,6 +1054,51 @@ class UploadRunPayload(BaseModel):
     boiler_params: Optional[Dict[str, Optional[float]]] = None
     flue_gas_temps: Optional[Dict[str, Optional[float]]] = None
     coal_mill_params: Optional[List[CoalMillParam]] = None
+
+
+def _resolve_station_id(conn, station_value: Any) -> Optional[int]:
+    """
+    Accept station id as int / numeric string, or station name.
+    Returns an integer station_id if resolvable, else None.
+    """
+    if station_value is None:
+        return None
+    if isinstance(station_value, int):
+        return station_value
+    s = str(station_value).strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+", s):
+        try:
+            return int(s)
+        except Exception:
+            pass
+
+    # Name path: fetch stations and match by common fields
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.callproc("sp_get_stations")
+        rows = []
+        for rs in cur.stored_results():
+            rows = rs.fetchall() or []
+        cur.close()
+        s_l = s.lower()
+        for r in rows:
+            # try common column names
+            name = (r.get("name") or r.get("station") or r.get("station_name") or r.get("location") or "").strip()
+            if name and name.lower() == s_l:
+                cand = r.get("station_id") or r.get("id") or r.get("stationId")
+                if cand is None:
+                    continue
+                if isinstance(cand, int):
+                    return cand
+                if re.fullmatch(r"\d+", str(cand).strip()):
+                    return int(str(cand).strip())
+    except Exception:
+        # If station resolution fails, caller will return a helpful error
+        return None
+
+    return None
 
 
 @app.post("/upload-run")
@@ -1066,6 +1112,11 @@ def upload_run_json(payload: UploadRunPayload):
         if not run_date_obj:
             return {"error": "Invalid run_date"}
 
+        try:
+            unit_id_int = int(payload.unit_id)
+        except Exception:
+            return {"error": "Invalid unit_id"}
+
         # Convert elevation rows to the same shape expected by sp_add_run_points_bulk.
         # Use c1/c2/... keys derived from "Corner <n>" labels (or any label containing a number).
         points: List[Dict[str, Any]] = []
@@ -1078,31 +1129,42 @@ def upload_run_json(payload: UploadRunPayload):
                     continue
                 m = re.search(r"(\d+)", str(label))
                 if m:
-                    point[f"c{m.group(1)}"] = temp
+                    # match excel upload shape (stringy numbers are ok for MySQL JSON parsing)
+                    point[f"c{m.group(1)}"] = float(temp)
             avg = r.average
             if avg is None:
-                present = [v for v in point.values() if isinstance(v, (int, float))]
+                present = [v for k, v in point.items() if k != "elevation" and isinstance(v, (int, float))]
                 avg = (sum(present) / len(present)) if present else None
-            point["avg"] = avg
-            point["avg_val"] = avg  # be tolerant to either naming convention downstream
+            point["avg"] = float(avg) if avg is not None else None
+            point["avg_val"] = float(avg) if avg is not None else None  # tolerate either naming convention
             points.append(point)
 
         conn = get_db()
         cur = conn.cursor(dictionary=True)
 
+        station_id_int = _resolve_station_id(conn, payload.station_id)
+        if station_id_int is None:
+            cur.close()
+            conn.close()
+            return {
+                "error": "Invalid station_id",
+                "detail": "Expected numeric station id or a station name matching sp_get_stations()",
+                "station_id_received": payload.station_id,
+            }
+
         # Create run
         cur.callproc(
             "sp_create_run",
             (
-                payload.station_id,
-                payload.unit_id,
+                station_id_int,
+                unit_id_int,
                 "manual_entry",
                 datetime.now(),
                 run_date_obj,
                 payload.uploaded_by or "system",
                 payload.notes or "",
-                "",  # location (BSL) not provided by manual entry
-                f"Unit-{payload.unit_id}",
+                str(payload.station_id or ""),  # store station name/location if UI sent it
+                f"Unit-{unit_id_int}",
             ),
         )
 
@@ -1121,7 +1183,7 @@ def upload_run_json(payload: UploadRunPayload):
         # Persist profile points
         cur.callproc(
             "sp_add_run_points_bulk",
-            (run_id, "", payload.unit_id, json.dumps(points)),
+            (run_id, str(payload.station_id or ""), unit_id_int, json.dumps(points)),
         )
 
         # Persist boiler + flue gas params (same table in this backend)
