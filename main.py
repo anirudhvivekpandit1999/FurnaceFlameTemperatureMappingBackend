@@ -245,27 +245,26 @@ _COAL_ROW_LABELS = {
 
 def extract_coal_mill_params(df):
     """
-    Find Coal Mill Parameters section.
+    Find Coal Mill Parameters section. Detect mill names from the COAL MILLS
+    header row, then for each parameter row scan by label.
+ 
+    Returns list of dicts: {mill, coal_flow_tph, pa_flow_tph, ...}
     """
     coal_row = find_row(df, 'COAL MILL PARAMETERS')
-    print(f"DEBUG: coal_row found at index: {coal_row}")
-    
     if coal_row is None:
-        print("DEBUG: No COAL MILL PARAMETERS section found")
         return []
  
-    end_row = find_row(df, r'end')
+    # Find end of section
+    end_row = find_row(df, 'end')  # Your Excel has 'end' at the bottom
     if end_row is None:
         end_row = len(df)
     
-    print(f"DEBUG: end_row set to: {end_row}")
-    
     # The COAL MILLS row has mill names: "Coal Mill - A", "Coal Mill - B", ...
     mills_header_row = None
-    for i in range(coal_row, min(coal_row + 3, len(df))):
+    for i in range(coal_row, min(coal_row + 5, len(df))):
         row_str = ' '.join(str(v) for v in df.iloc[i] if v is not None).lower()
-        print(f"DEBUG: Checking row {i}: '{row_str}'")
-        if 'coal mill' in row_str or 'coal mills' in row_str:
+        print(f"DEBUG: Checking row {i}: '{row_str[:100]}'")
+        if 'coal mill -' in row_str or 'coal mills' in row_str:
             mills_header_row = i
             print(f"DEBUG: Found mills header at row {i}")
             break
@@ -281,8 +280,9 @@ def extract_coal_mill_params(df):
             continue
         vs = str(val).strip()
         print(f"DEBUG: Checking column {col_pos}: '{vs}'")
-        # Match "Coal Mill - A" or "Coal Mill A" or just "A"
-        m = re.search(r'coal\s*mill[\s\-]*([A-Ha-h])\b', vs, re.IGNORECASE)
+        
+        # Improved regex to match "Coal Mill - A" or "Coal Mill A"
+        m = re.search(r'coal\s*mill\s*[-–—]?\s*([A-Ha-h])', vs, re.IGNORECASE)
         if m:
             mills.append((m.group(1).upper(), col_pos))
             print(f"DEBUG: Found mill {m.group(1).upper()} at column {col_pos}")
@@ -290,15 +290,21 @@ def extract_coal_mill_params(df):
     print(f"DEBUG: Total mills found: {len(mills)}")
     
     if not mills:
-        print("DEBUG: No mills found in header row")
         return []
  
-    # Find the label column (leftmost non-mill column in that row)
-    label_col = 0   # usually column A (index 0)
+    # Find the label column (where parameter names are)
+    label_col = 0  # usually column A (index 0)
+    
+    # Try to find the label column dynamically
+    for col_pos in range(min(3, df.shape[1])):
+        sample_val = str(df.iloc[mills_header_row + 1, col_pos]) if mills_header_row + 1 < len(df) else ""
+        if 'coal flow' in sample_val.lower():
+            label_col = col_pos
+            break
  
     # For each row label, find the row index
     label_row_map = {}
-    for i in range(mills_header_row + 1, end_row):
+    for i in range(mills_header_row + 1, min(end_row, len(df))):
         cell = clean(df.iloc[i, label_col])
         if not cell:
             continue
@@ -316,14 +322,25 @@ def extract_coal_mill_params(df):
         for key in _COAL_ROW_LABELS:
             row_i = label_row_map.get(key)
             if row_i is not None and col_pos < df.shape[1]:
-                entry[key] = clean(df.iloc[row_i, col_pos])
+                value = clean(df.iloc[row_i, col_pos])
+                # Try to convert to number
+                if value is not None:
+                    try:
+                        entry[key] = float(value)
+                    except (ValueError, TypeError):
+                        entry[key] = value
+                else:
+                    entry[key] = None
             else:
                 entry[key] = None
         # Only include if at least one value is non-null
-        if any(v for k, v in entry.items() if k != 'mill'):
+        if any(v for k, v in entry.items() if k != 'mill' and v is not None):
             result.append(entry)
     
     print(f"DEBUG: Final result has {len(result)} mills")
+    if result:
+        print(f"DEBUG: First mill data: {result[0]}")
+    
     return result
 
 def extract_profile_points(df):
