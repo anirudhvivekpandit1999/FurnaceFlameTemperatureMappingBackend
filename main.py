@@ -173,7 +173,7 @@ def find_row(df, text):
         for cell in row:
             if cell is not None and text_l in str(cell).lower():
                 return i
-    return 
+    return None
 
 def find_col_in_row(df, row_idx, text):
     """
@@ -318,14 +318,11 @@ def extract_coal_mill_params(df):
     mills_header_row = None
     for i in range(coal_row, min(coal_row + 5, len(df))):
         row_str = ' '.join(str(v) for v in df.iloc[i] if v is not None).lower()
-        print(f"DEBUG: Checking row {i}: '{row_str[:100]}'")
         if 'coal mill -' in row_str or 'coal mills' in row_str:
             mills_header_row = i
-            print(f"DEBUG: Found mills header at row {i}")
             break
  
     if mills_header_row is None:
-        print("DEBUG: No mills header row found")
         return []
  
     # Collect (mill_letter, col_index) pairs from that header row
@@ -334,15 +331,11 @@ def extract_coal_mill_params(df):
         if val is None:
             continue
         vs = str(val).strip()
-        print(f"DEBUG: Checking column {col_pos}: '{vs}'")
         
         # Improved regex to match "Coal Mill - A" or "Coal Mill A"
         m = re.search(r'coal\s*mill\s*[-–—]?\s*([A-Ha-h])', vs, re.IGNORECASE)
         if m:
             mills.append((m.group(1).upper(), col_pos))
-            print(f"DEBUG: Found mill {m.group(1).upper()} at column {col_pos}")
-    
-    print(f"DEBUG: Total mills found: {len(mills)}")
     
     if not mills:
         return []
@@ -364,11 +357,9 @@ def extract_coal_mill_params(df):
         if not cell:
             continue
         cell_l = cell.lower()
-        print(f"DEBUG: Checking row {i} for labels: '{cell_l}'")
         for key, frag in _COAL_ROW_LABELS.items():
             if frag in cell_l and key not in label_row_map:
                 label_row_map[key] = i
-                print(f"DEBUG: Found {key} at row {i}")
  
     # Build result – one dict per mill
     result = []
@@ -391,10 +382,6 @@ def extract_coal_mill_params(df):
         # Only include if at least one value is non-null
         if any(v for k, v in entry.items() if k != 'mill' and v is not None):
             result.append(entry)
-    
-    print(f"DEBUG: Final result has {len(result)} mills")
-    if result:
-        print(f"DEBUG: First mill data: {result[0]}")
     
     return result
 
@@ -422,22 +409,18 @@ def extract_profile_points(df):
     corner_cols = []  # List of (column_name, column_index)
     avg_col = None
     
-    print(f"DEBUG: Header row columns: {list(header_row)}")
-    
     for col_pos in range(elev_col + 1, len(header_row)):
         cell_val = clean(header_row.iloc[col_pos])
         if cell_val is None:
             continue
         
         cell_str = str(cell_val).strip().upper()
-        print(f"DEBUG: Column {col_pos}: '{cell_str}'")
         
         # Match corner columns: CORNER 1, CORNER 2, CORNER 3, CORNER 4, CORNER 5, etc.
         corner_match = re.search(r'CORNER\s*(\d+)', cell_str)
         if corner_match:
             corner_num = corner_match.group(1)
             corner_cols.append((f'c{corner_num}', col_pos))
-            print(f"DEBUG: Found corner column: c{corner_num} at position {col_pos}")
             continue
         
         # Also match just C1, C2, C3, C4, C5 format
@@ -445,17 +428,14 @@ def extract_profile_points(df):
         if corner_match:
             corner_num = corner_match.group(1)
             corner_cols.append((f'c{corner_num}', col_pos))
-            print(f"DEBUG: Found corner column: c{corner_num} at position {col_pos}")
             continue
         
         # Match average column
         if re.search(r'AVG|AVERAGE', cell_str):
             avg_col = col_pos
-            print(f"DEBUG: Found average column at position {col_pos}")
     
     # If no corner columns detected, fall back to default c1-c4 positions
     if not corner_cols:
-        print("DEBUG: No corner columns found, using default c1-c4")
         corner_cols = [
             ('c1', elev_col + 1),
             ('c2', elev_col + 2),
@@ -464,9 +444,6 @@ def extract_profile_points(df):
         ]
         if avg_col is None:
             avg_col = elev_col + 5
-    
-    print(f"DEBUG: Final corner columns: {corner_cols}")
-    print(f"DEBUG: Average column: {avg_col}")
     
     # Find where the boiler section starts so we know when to stop
     boiler_row = find_row(df, 'BOILER & MILL PARAMETERS')
@@ -525,9 +502,7 @@ def extract_profile_points(df):
                 point['avg'] = None
         
         points.append(point)
-        print(f"DEBUG: Point added: {point}")
     
-    print(f"DEBUG: Total points extracted: {len(points)}")
     return points
 
 
@@ -824,6 +799,7 @@ async def upload_file(
     except Exception as exc:
         import traceback
         return {'error': str(exc), 'trace': traceback.format_exc()}
+
 # ─── HISTORY ──────────────────────────────────────────────────
 @app.get("/history")
 def get_history(
@@ -996,7 +972,106 @@ def get_units(station_id: int):
     conn.close()
     return data
 
- class GenerateExcelPayload(BaseModel):
+
+@app.get("/mapping-dates")
+def get_mapping_dates(station: str = Query(...), unit: int = Query(...)):
+    conn = get_db()
+    cur = conn.cursor(dictionary=True)        # ← add dictionary=True
+    cur.callproc("sp_get_mapping_dates", (station, unit))
+    rows = []
+    for result_set in cur.stored_results():   # ← use stored_results()
+        rows = result_set.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+@app.delete("/runs/{run_id}")
+def delete_run(run_id: int):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Delete dependent data first (IMPORTANT for FK safety)
+        cur.execute("DELETE FROM profile_points WHERE run_id = %s", (run_id,))
+        cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
+        cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
+        
+        # Finally delete run
+        cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
+
+        conn.commit()
+        conn.close()
+
+        return {"message": f"Run {run_id} deleted successfully"}
+
+    except Exception as e:
+        return {"error": str(e)}
+    
+@app.get("/get-upload-log")
+def get_upload_log():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.callproc("sp_get_event_log")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ElevationProfileRow(BaseModel):
+    elevation_m: float = Field(..., description="Elevation in meters")
+    values: Dict[str, Optional[float]] = Field(default_factory=dict, description="Corner label -> temperature")
+    average: Optional[float] = None
+
+
+class ElevationProfile(BaseModel):
+    columns: List[str]
+    rows: List[ElevationProfileRow]
+
+
+class RunMeta(BaseModel):
+    run_date: str
+    run_time: Optional[str] = None
+    load_mw: Optional[float] = None
+    total_coal_flow_tph: Optional[float] = None
+    total_air_flow_tph: Optional[float] = None
+    burner_tilt_deg: Optional[float] = None
+    coal_mills_in_service_count: Optional[float] = None
+    coal_mills_in_service: Optional[str] = None
+    oil_guns_in_service_count: Optional[float] = None
+    oil_guns_in_service: Optional[str] = None
+
+
+class CoalMillParam(BaseModel):
+    mill: str
+    coal_flow_tph: Optional[float] = None
+    pa_flow_tph: Optional[float] = None
+    mill_dp_mmwc: Optional[float] = None
+    mill_outlet_temp: Optional[float] = None
+    mill_current_amp: Optional[float] = None
+
+
+class UploadRunPayload(BaseModel):
+    # API-facing: treat station as a location/name string (e.g. "BSL").
+    # We do NOT require callers to know / provide numeric station_id.
+    station: Optional[str] = None
+    # Backward-compatible: if older clients still send station_id, we accept it.
+    station_id: Optional[Any] = None
+    unit_id: Any
+    uploaded_by: Optional[str] = "system"
+    notes: Optional[str] = ""
+    run_meta: RunMeta
+    elevation_profile: ElevationProfile
+    boiler_params: Optional[Dict[str, Optional[float]]] = None
+    flue_gas_temps: Optional[Dict[str, Optional[float]]] = None
+    coal_mill_params: Optional[List[CoalMillParam]] = None
+
+
+class GenerateExcelPayload(BaseModel):
     """
     Accepts the same shape as UploadRunPayload so your frontend
     can reuse the same data object it already sends to /upload-run.
@@ -1431,104 +1506,6 @@ def generate_excel(payload: BatchGenerateExcelPayload):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
-
-
-@app.get("/mapping-dates")
-def get_mapping_dates(station: str = Query(...), unit: int = Query(...)):
-    conn = get_db()
-    cur = conn.cursor(dictionary=True)        # ← add dictionary=True
-    cur.callproc("sp_get_mapping_dates", (station, unit))
-    rows = []
-    for result_set in cur.stored_results():   # ← use stored_results()
-        rows = result_set.fetchall()
-    cur.close()
-    conn.close()
-    return rows
-
-@app.delete("/runs/{run_id}")
-def delete_run(run_id: int):
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-
-        # Delete dependent data first (IMPORTANT for FK safety)
-        cur.execute("DELETE FROM profile_points WHERE run_id = %s", (run_id,))
-        cur.execute("DELETE FROM boiler_mill_params WHERE run_id = %s", (run_id,))
-        cur.execute("DELETE FROM coal_mill_params WHERE run_id = %s", (run_id,))
-        
-        # Finally delete run
-        cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
-
-        conn.commit()
-        conn.close()
-
-        return {"message": f"Run {run_id} deleted successfully"}
-
-    except Exception as e:
-        return {"error": str(e)}
-    
-@app.get("/get-upload-log")
-def get_upload_log():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.callproc("sp_get_event_log")
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class ElevationProfileRow(BaseModel):
-    elevation_m: float = Field(..., description="Elevation in meters")
-    values: Dict[str, Optional[float]] = Field(default_factory=dict, description="Corner label -> temperature")
-    average: Optional[float] = None
-
-
-class ElevationProfile(BaseModel):
-    columns: List[str]
-    rows: List[ElevationProfileRow]
-
-
-class RunMeta(BaseModel):
-    run_date: str
-    run_time: Optional[str] = None
-    load_mw: Optional[float] = None
-    total_coal_flow_tph: Optional[float] = None
-    total_air_flow_tph: Optional[float] = None
-    burner_tilt_deg: Optional[float] = None
-    coal_mills_in_service_count: Optional[float] = None
-    coal_mills_in_service: Optional[str] = None
-    oil_guns_in_service_count: Optional[float] = None
-    oil_guns_in_service: Optional[str] = None
-
-
-class CoalMillParam(BaseModel):
-    mill: str
-    coal_flow_tph: Optional[float] = None
-    pa_flow_tph: Optional[float] = None
-    mill_dp_mmwc: Optional[float] = None
-    mill_outlet_temp: Optional[float] = None
-    mill_current_amp: Optional[float] = None
-
-
-class UploadRunPayload(BaseModel):
-    # API-facing: treat station as a location/name string (e.g. "BSL").
-    # We do NOT require callers to know / provide numeric station_id.
-    station: Optional[str] = None
-    # Backward-compatible: if older clients still send station_id, we accept it.
-    station_id: Optional[Any] = None
-    unit_id: Any
-    uploaded_by: Optional[str] = "system"
-    notes: Optional[str] = ""
-    run_meta: RunMeta
-    elevation_profile: ElevationProfile
-    boiler_params: Optional[Dict[str, Optional[float]]] = None
-    flue_gas_temps: Optional[Dict[str, Optional[float]]] = None
-    coal_mill_params: Optional[List[CoalMillParam]] = None
 
 
 def _fetch_stations(conn) -> List[Dict[str, Any]]:
