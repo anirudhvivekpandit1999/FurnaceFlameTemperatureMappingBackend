@@ -859,34 +859,50 @@ def get_history(
 
 @app.get("/history/{run_id}")
 def get_run(run_id: int):
-    conn = get_db()
-    cur = conn.cursor(dictionary=True)
-    cur.callproc("sp_get_run_profile", (run_id,))
-    rows = []
-    for result_set in cur.stored_results():
-        rows = result_set.fetchall()
-    cur.close()
-    conn.close()
-    
-    if not rows:
-        return {
-            "elevation": [],
-            "average": [],
+    try:
+        conn = get_db()
+        cur = conn.cursor(dictionary=True)
+        
+        # Call the stored procedure
+        cur.callproc("sp_get_run_profile", (run_id,))
+        
+        # Fetch results - important: stored_results() must be iterated
+        rows = []
+        for result_set in cur.stored_results():
+            rows = result_set.fetchall()
+            break  # Take the first result set
+        
+        cur.close()
+        conn.close()
+        
+        print(f"DEBUG: Found {len(rows)} rows for run_id {run_id}")
+        
+        if not rows:
+            return {
+                "elevation": [],
+                "average": [],
+            }
+        
+        # Build the response
+        result = {
+            "elevation": [float(r["elevation"]) for r in rows],
+            "average": [float(r["avg_val"]) if r["avg_val"] is not None else None for r in rows],
         }
-    
-    # Dynamically build response based on actual database columns
-    result = {
-        "elevation": [r["elevation"] for r in rows],
-        "average": [r.get("avg_val") for r in rows],
-    }
-    
-    # Extract all corner columns dynamically
-    for key in rows[0].keys():
-        # Match c1, c2, c3, c4, c5, c6, c7, c8
-        if re.match(r'^c\d+$', key):
-            result[key] = [r.get(key) for r in rows]
-    
-    return result
+        
+        # Add corner columns (c1 to c4 based on your data)
+        for col in ['c1', 'c2', 'c3', 'c4']:
+            if col in rows[0]:
+                result[col] = [float(r[col]) if r[col] is not None else None for r in rows]
+        
+        print(f"DEBUG: Returning data - elevations: {len(result['elevation'])}, c1: {len(result.get('c1', []))}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"ERROR in get_run: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e), "elevation": [], "average": []}
 
 @app.get("/history/{run_id}/boiler-params")
 def get_boiler_params(run_id: int):
