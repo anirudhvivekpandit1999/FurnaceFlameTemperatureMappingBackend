@@ -810,53 +810,56 @@ def get_history(
 ):
     conn = get_db()
     cur = conn.cursor(dictionary=True)
+    
     sd_obj = parse_date_flexible(start_date) if start_date else None
     ed_obj = parse_date_flexible(end_date) if end_date else None
-    sd = sd_obj.isoformat() if sd_obj else "2000-01-01"
-    ed = ed_obj.isoformat() if ed_obj else "2100-01-01"
+    sd = sd_obj if sd_obj else "2000-01-01"
+    ed = ed_obj if ed_obj else "2100-01-01"
 
     s = (station_id or "").strip()
     rows = []
 
-    # If station_id is numeric, use the stored procedure.
-    # If it's a location string like "BSL", query by `runs.location` directly.
     if re.fullmatch(r"\d+", s):
         cur.callproc("sp_get_runs", (int(s), unit_id, sd, ed))
         for result_set in cur.stored_results():
             rows = result_set.fetchall()
     else:
+        # Use DATE() function to compare only the date part
         cur.execute(
             """
             SELECT *
             FROM runs
             WHERE unit_id = %s
               AND location = %s
-              AND run_date BETWEEN %s AND %s
+              AND DATE(run_date) BETWEEN %s AND %s
             ORDER BY run_date DESC, run_timestamp DESC
             """,
             (unit_id, s, sd, ed),
         )
         rows = cur.fetchall()
 
-        # If exact location match yields nothing, fall back to LIKE.
+        # If still no results, try without date filter to see if data exists
         if not rows:
+            print(f"No results with date filter, checking if data exists for {s}, {unit_id}")
             cur.execute(
                 """
-                SELECT *
+                SELECT run_id, run_date, location, unit_id
                 FROM runs
-                WHERE unit_id = %s
-                  AND location LIKE %s
-                  AND run_date BETWEEN %s AND %s
-                ORDER BY run_date DESC, run_timestamp DESC
+                WHERE unit_id = %s AND location = %s
                 """,
-                (unit_id, f"%{s}%", sd, ed),
+                (unit_id, s)
             )
-            rows = cur.fetchall()
+            existing = cur.fetchall()
+            print(f"Found {len(existing)} runs without date filter: {existing}")
+    
     cur.close()
     conn.close()
+    
+    print(f"Returning {len(rows)} rows for {s}, unit {unit_id}, dates {sd} to {ed}")
+    
     return rows
 
-
+    
 @app.get("/history/{run_id}")
 def get_run(run_id: int):
     try:
