@@ -976,14 +976,35 @@ def get_units(station_id: int):
 @app.get("/mapping-dates")
 def get_mapping_dates(station: str = Query(...), unit: int = Query(...)):
     conn = get_db()
-    cur = conn.cursor(dictionary=True)        # ← add dictionary=True
+    cur = conn.cursor(dictionary=True)
     cur.callproc("sp_get_mapping_dates", (station, unit))
+    
     rows = []
-    for result_set in cur.stored_results():   # ← use stored_results()
+    for result_set in cur.stored_results():
         rows = result_set.fetchall()
+    
     cur.close()
     conn.close()
-    return rows
+    
+    # Convert dates to string format explicitly
+    formatted_rows = []
+    for row in rows:
+        formatted_row = {}
+        for key, value in row.items():
+            if key == 'run_date' and value is not None:
+                # Convert date to YYYY-MM-DD string
+                if hasattr(value, 'strftime'):
+                    formatted_row[key] = value.strftime('%Y-%m-%d')
+                else:
+                    formatted_row[key] = str(value)[:10]
+            else:
+                formatted_row[key] = value
+        formatted_rows.append(formatted_row)
+    
+    print(f"Returning {len(formatted_rows)} dates for {station}, unit {unit}")
+    print(f"First few dates: {[r['run_date'] for r in formatted_rows[:5]]}")
+    
+    return formatted_rows
 
 @app.delete("/runs/{run_id}")
 def delete_run(run_id: int):
