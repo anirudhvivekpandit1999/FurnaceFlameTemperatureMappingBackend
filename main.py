@@ -811,52 +811,39 @@ def get_history(
     conn = get_db()
     cur = conn.cursor(dictionary=True)
     
-    sd_obj = parse_date_flexible(start_date) if start_date else None
-    ed_obj = parse_date_flexible(end_date) if end_date else None
-    
-    # Convert to date objects
-    sd = sd_obj if sd_obj else None
-    ed = ed_obj if ed_obj else None
-
     s = (station_id or "").strip()
-    rows = []
-
-    if re.fullmatch(r"\d+", s):
-        # If dates are provided, use them, otherwise pass None
-        cur.callproc("sp_get_runs", (int(s), unit_id, sd, ed))
-        for result_set in cur.stored_results():
-            rows = result_set.fetchall()
-    else:
-        # Build query dynamically based on whether dates are provided
-        query = """
-            SELECT *
-            FROM runs
-            WHERE unit_id = %s
-              AND location = %s
-        """
-        params = [unit_id, s]
-        
-        if sd and ed:
-            query += " AND DATE(run_date) BETWEEN %s AND %s"
-            params.extend([sd, ed])
-        elif sd:
-            query += " AND DATE(run_date) >= %s"
-            params.append(sd)
-        elif ed:
-            query += " AND DATE(run_date) <= %s"
-            params.append(ed)
-        
-        query += " ORDER BY run_date DESC, run_timestamp DESC"
-        
-        print(f"Executing query: {query}")
-        print(f"With params: {params}")
-        
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        
-        print(f"Found {len(rows)} rows")
-        for row in rows:
-            print(f"  Run {row['run_id']}: run_date={row['run_date']}, run_timestamp={row['run_timestamp']}")
+    
+    # Build the base query
+    query = """
+        SELECT *
+        FROM runs
+        WHERE location = %s
+          AND unit_id = %s
+    """
+    params = [s, unit_id]
+    
+    # Add date filtering if provided
+    if start_date and end_date:
+        query += " AND DATE(run_date) BETWEEN %s AND %s"
+        params.extend([start_date, end_date])
+    elif start_date:
+        query += " AND DATE(run_date) >= %s"
+        params.append(start_date)
+    elif end_date:
+        query += " AND DATE(run_date) <= %s"
+        params.append(end_date)
+    
+    query += " ORDER BY run_date DESC, run_timestamp DESC"
+    
+    print(f"Executing query: {query}")
+    print(f"Params: {params}")
+    
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    
+    print(f"Found {len(rows)} rows")
+    for row in rows:
+        print(f"  Run {row['run_id']}: run_date={row['run_date']}, run_timestamp={row['run_timestamp']}")
     
     cur.close()
     conn.close()
